@@ -1,0 +1,14 @@
+import { fileURLToPath } from 'url';
+
+// Database migration logic would go here
+async function main() {
+  // Migration logic
+  console.log('Running database migrations...');
+  console.log('Migration function executed successfully!');
+  // Add actual migration code here
+}
+
+// Fixed condition - using fileURLToPath to convert file URL to file path
+if (fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch(console.error);
+}

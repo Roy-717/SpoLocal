@@ -1,0 +1,21 @@
+{
+  "name": "database-migration-fix",
+  "version": "1.0.0",
+  "description": "Fix for import.meta.url comparison bug",
+  "main": "src/server/database/migrate.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "migrate": "node src/server/database/migrate.js",
+    "migrate:ts": "npx tsx src/server/database/migrate.ts",
+    "migrate:js": "node src/server/database/migrate.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

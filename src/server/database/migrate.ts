@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { pathToFileURL } from 'url';
 import mysql from 'mysql2/promise';
 import { config } from '../config/index.js';
 
@@ -206,7 +207,7 @@ async function main() {
 }
 
 // Run migrations if this file is executed directly
-if (import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
 

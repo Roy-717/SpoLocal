@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Self-hosted music streaming with YouTube" />
+  <meta name="theme-color" content="#8f23e8" />
+  
+  <!-- PWA manifest -->
+  <link rel="manifest" href="/manifest.json" />
+  
+  <!-- Icons -->
+  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  
+  <!-- Preconnect for performance -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  
+  <title>YTMusic Streaming</title>
+  
+  <style>
+    /* Loading styles */
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+      background-color: #ffffff;
+      color: #000000;
+      overflow: hidden;
+    }
+    
+    #loading {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #8f23e8;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .loading-text {
+      margin-top: 20px;
+      font-size: 18px;
+      color: #666666;
+    }
+    
+    /* Hide loading when app is ready */
+    .app-ready #loading {
+      display: none;
+    }
+    
+    .app-ready {
+      overflow: auto;
+    }
+    
+    /* Global styles */
+    * {
+      box-sizing: border-box;
+    }
+    
+    #root {
+      width: 100%;
+      height: 100vh;
+      position: relative;
+    }
+    
+    /* Accessibility */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    
+    /* Focus styles */
+    *:focus {
+      outline: 2px solid #8f23e8;
+      outline-offset: 2px;
+    }
+    
+    /* Scrollbar styles */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+      background: #c1c1c1;
+      border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+      background: #8f23e8;
+    }
+    
+    /* No-script fallback */
+    .no-js {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <noscript>
+    <div class="no-js">
+      <h1>JavaScript Required</h1>
+      <p>This application requires JavaScript to run. Please enable JavaScript in your browser.</p>
+    </div>
+  </noscript>
+  
+  <!-- Loading screen -->
+  <div id="loading">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Loading YTMusic...</div>
+  </div>
+  
+  <!-- App root -->
+  <div id="root"></div>
+  
+  <!-- Service Worker registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((registration) => {
+            console.log('SW registered: ', registration);
+          })
+          .catch((registrationError) => {
+            console.log('SW registration failed: ', registrationError);
+          });
+      });
+    }
+    
+    // Remove loading screen once app is ready
+    window.addEventListener('DOMContentLoaded', () => {
+      setTimeout(() => {
+        document.body.classList.add('app-ready');
+      }, 100);
+    });
+  </script>
+  
+  <!-- React app -->
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

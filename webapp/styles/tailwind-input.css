@@ -1,0 +1,7 @@
+/*
+ * Tailwind source stylesheet for SpoLocal.
+ * Compiled into static/app.css.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

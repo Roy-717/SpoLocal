@@ -1,0 +1,34 @@
+services:
+  spolocal:
+    build: .
+    container_name: spolocal
+    expose:
+      - "8000"
+    environment:
+      SPLOCAL_PLAYLISTS_PATH: /data/webapp_playlists.json
+    volumes:
+      - ./downloads:/app/downloads
+      - ./data:/data
+      - ./webapp/static:/app/webapp/static
+      - ./webapp/templates:/app/webapp/templates
+      - ./webapp/main.py:/app/webapp/main.py
+    # Optional: copy webapp/.env.example → webapp/.env, then add:
+    #   - ./webapp/.env:/app/webapp/.env:ro
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: spolocal-caddy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - spolocal
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

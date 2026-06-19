@@ -1,0 +1,9 @@
+﻿# Secrets - keep out of Cursor indexing / AI context
+.env
+**/.env
+.env.*
+!.env.example
+__pycache__
+node_modules
+downloads
+ffmpeg

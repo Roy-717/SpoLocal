@@ -1,0 +1,342 @@
+/**
+ * Controller for the playlist context menu (right-click).
+ * Responsibilities:
+ * - Build and show context menu for tracks and playlists
+ * - Handle context menu actions (add to queue, download, delete, etc.)
+ * - Manage menu positioning and auto-close behavior
+ */
+export class PlaylistContextMenuController {
+    /** @param {import('../player/player_state.js').PlaylistPlayerState} state */
+    constructor(state) {
+        /** @type {import('./state.js').PlaylistPlayerState} */
+        this.state = state;
+        /** @type {import('../player/queue_controller.js').PlaylistQueueController|null} */
+        this.queue = null;
+        /** @type {import('./edit_modal_controller.js').PlaylistEditModalController|null} */
+        this.editModal = null;
+        /** @type {import('../player/transport_controller.js').PlaylistTransportController|null} */
+        this.transport = null;
+    }
+
+    /** Set cross-controller references after all controllers are created. */
+    setCrossRefs(queue, editModal, transport) {
+        this.queue = queue;
+        this.editModal = editModal;
+        this.transport = transport;
+    }
+
+    /** Wire up context menu event listeners. */
+    init() {
+        const hub = this.state.hub;
+        if (!hub) return;
+
+        document.addEventListener('contextmenu', (e) => this.handleContextMenu(e), true);
+        document.addEventListener('click', (e) => {
+            if (hub.contextMenuEl && !hub.contextMenuEl.classList.contains('hidden') && hub.contextMenuEl.contains(e.target)) return;
+            this.closeContextMenu();
+        });
+        document.addEventListener('scroll', () => this.closeContextMenu(), true);
+        window.addEventListener('resize', () => this.closeContextMenu());
+        window.addEventListener('blur', () => this.closeContextMenu());
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            if (!hub.contextMenuEl || hub.contextMenuEl.classList.contains('hidden')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            this.closeContextMenu();
+        }, true);
+    }
+
+    closeContextMenu() {
+        const hub = this.state.hub;
+        if (hub.contextMenuEl) {
+            hub.contextMenuEl.classList.add('hidden');
+            hub.contextMenuEl.setAttribute('aria-hidden', 'true');
+        }
+        if (hub.contextMenuItemsEl) hub.contextMenuItemsEl.innerHTML = '';
+    }
+
+    clampContextMenuPos(left, top, width, height) {
+        const pad = 8;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        let l = left;
+        let t = top;
+        if (l + width > vw - pad) l = Math.max(pad, vw - width - pad);
+        if (t + height > vh - pad) t = Math.max(pad, vh - height - pad);
+        if (l < pad) l = pad;
+        if (t < pad) t = pad;
+        return { l: l, t: t };
+    }
+
+    trackHasSourceUrl(url, ytid) {
+        const u = (url || '').trim();
+        if (ytid && String(ytid).trim()) return true;
+        if (!u) return false;
+        return /spotify\.com|youtube\.com|youtu\.be|spotify:/i.test(u);
+    }
+
+    trackDownloadMenuSpec(status, playSrc, url, ytid) {
+        if (status === 'downloading') return null;
+        if (status === 'done' && this.trackHasSourceUrl(url, ytid)) {
+            return { label: 'Re-download', redownload: true };
+        }
+        if (status === 'queued') return { label: 'Download again', redownload: false };
+        if (status === 'pending') return { label: 'Download', redownload: false };
+        if (status === 'error') return { label: 'Download again', redownload: false };
+        return null;
+    }
+
+    buildHitFromLibraryTrack(trackId) {
+        const hub = this.state.hub;
+        const tid = (trackId || '').trim();
+        if (!tid) return null;
+        if (hub.lastPlayedTrackSnapshot && hub.lastPlayedTrackSnapshot.id === tid) {
+            const snap = hub.lastPlayedTrackSnapshot;
+            let url = (snap.url || '').trim();
+            const ytid = (snap.youtube_video_id || '').trim();
+            if (!url && ytid) {
+                url = 'https://www.youtube.com/watch?v=' + encodeURIComponent(ytid);
+            }
+            return {
+                title: snap.title || '',
+                artist: snap.artist || '',
+                channel: snap.artist || '',
+                url: url,
+                album: snap.album || '',
+            };
+        }
+        let t = hub.tracks.find(function (x) { return x.id === tid; });
+        let title = '';
+        let artist = '';
+        let album = '';
+        let url = '';
+        let ytid = '';
+        if (t) {
+            title = t.title || '';
+            artist = t.artist || '';
+            album = t.album != null ? String(t.album) : '';
+            url = (t.url || '').trim();
+            ytid = (t.youtube_video_id || '').trim();
+        } else {
+            const row = this.transport ? this.transport.rowForTrack(tid) : null;
+            if (!row) return null;
+            title = row.getAttribute('data-title') || '';
+            artist = row.getAttribute('data-artist') || '';
+            url = (row.getAttribute('data-track-url') || '').trim();
+            ytid = (row.getAttribute('data-youtube-video-id') || '').trim();
+        }
+        if (!url && ytid) {
+            url = 'https://www.youtube.com/watch?v=' + encodeURIComponent(ytid);
+        }
+        if (!title && !artist && !url) return null;
+        return {
+            title: title,
+            artist: artist,
+            channel: artist,
+            url: url,
+            album: album,
+        };
+    }
+
+    openContextMenu(clientX, clientY, payload) {
+        const hub = this.state.hub;
+        if (!hub.contextMenuEl || !hub.contextMenuItemsEl) return;
+        hub.contextMenuItemsEl.innerHTML = '';
+
+        const mkBtn = (label, onClick, danger) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'w-full px-3 py-2 text-left text-sm text-white hover:bg-[#3E3E3E] focus:bg-[#3E3E3E] focus:outline-none';
+            if (danger) b.classList.add('text-red-400');
+            b.setAttribute('role', 'menuitem');
+            b.textContent = label;
+            b.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.closeContextMenu();
+                onClick();
+            });
+            hub.contextMenuItemsEl.appendChild(b);
+        };
+
+        if (payload.type === 'track') {
+            const playSrcTrim = (payload.playSrc || '').trim();
+            if (playSrcTrim) {
+                mkBtn('Add to queue', () => {
+                    if (this.queue) {
+                        this.queue.enqueue_manual_play_next({
+                            source_playlist_id: String(payload.playlistId || hub.playlistId),
+                            track_id: String(payload.trackId),
+                            play_src: playSrcTrim,
+                            title: payload.title || '',
+                            artist: payload.artist || '',
+                            album: payload.album || '',
+                            youtube_video_id: (payload.ytid || '').trim(),
+                            url: (payload.url || '').trim(),
+                        });
+                    }
+                }, false);
+            }
+            const addHit = this.buildHitFromLibraryTrack(payload.trackId);
+            if (addHit) {
+                mkBtn('Add to playlist', () => {
+                    if (typeof window.openAddToPlaylistAtPoint === 'function') {
+                        window.openAddToPlaylistAtPoint(addHit, clientX, clientY);
+                    }
+                }, false);
+            }
+            const spec = this.trackDownloadMenuSpec(payload.status, payload.playSrc, payload.url, payload.ytid);
+            if (spec) {
+                mkBtn(spec.label, () => {
+                    const f = document.createElement('form');
+                    f.method = 'post';
+                    f.action = '/playlists/' + encodeURIComponent(payload.playlistId) + '/tracks/' + encodeURIComponent(payload.trackId) + '/download';
+                    if (spec.redownload) {
+                        const inp = document.createElement('input');
+                        inp.type = 'hidden';
+                        inp.name = 'redownload';
+                        inp.value = '1';
+                        f.appendChild(inp);
+                    }
+                    document.body.appendChild(f);
+                    f.submit();
+                }, false);
+            }
+            mkBtn('Delete', () => {
+                if (!confirm('Remove this song from the playlist? The audio file on disk will be deleted if present.')) return;
+                const f = document.createElement('form');
+                f.method = 'post';
+                f.action = '/playlists/' + encodeURIComponent(payload.playlistId) + '/tracks/' + encodeURIComponent(payload.trackId) + '/delete';
+                document.body.appendChild(f);
+                f.submit();
+            }, true);
+        } else if (payload.type === 'playlist') {
+            mkBtn('Edit playlist', () => {
+                const pid = payload.playlistId;
+                let name = payload.playlistName || '';
+                let bio = '';
+                try {
+                    const catalog = Array.isArray(window.__playlistsCatalog) ? window.__playlistsCatalog : [];
+                    const row = Array.isArray(catalog) ? catalog.find(function (p) { return p.id === pid; }) : null;
+                    if (row) {
+                        name = row.name || name;
+                        bio = row.bio != null ? String(row.bio) : '';
+                    }
+                } catch (err) {}
+                if (this.editModal) {
+                    this.editModal.openPlaylistEditModal({ id: pid, name: name, bio: bio });
+                }
+            }, false);
+            mkBtn('Delete playlist', () => {
+                const n = payload.playlistName || 'this playlist';
+                if (!confirm('Delete playlist "' + n + '"? Files on disk are not removed.')) return;
+                const f = document.createElement('form');
+                f.method = 'post';
+                f.action = '/playlists/' + encodeURIComponent(payload.playlistId) + '/delete';
+                document.body.appendChild(f);
+                f.submit();
+            }, true);
+        } else if (payload.type === 'now-playing') {
+            if (!hub.currentTrackId) return;
+            const ps = (hub.audio.currentSrc || hub.audio.src || '').trim();
+            const addHit = this.buildHitFromLibraryTrack(payload.trackId);
+            if (!ps && !addHit) return;
+            if (ps) {
+                mkBtn('Add to queue', () => {
+                    if (this.queue) {
+                        this.queue.enqueue_manual_play_next({
+                            source_playlist_id: String(hub.playingPlaylistId || hub.playlistId),
+                            track_id: String(hub.currentTrackId),
+                            play_src: ps,
+                            title: hub.titleEl.textContent || '',
+                            artist: hub.subEl.textContent || '',
+                            album: (hub.lastPlayedTrackSnapshot && hub.lastPlayedTrackSnapshot.album) ? String(hub.lastPlayedTrackSnapshot.album) : '',
+                            youtube_video_id: (hub.lastPlayedTrackSnapshot && hub.lastPlayedTrackSnapshot.youtube_video_id) || '',
+                            url: (hub.lastPlayedTrackSnapshot && hub.lastPlayedTrackSnapshot.url) || '',
+                        });
+                    }
+                }, false);
+            }
+            if (addHit) {
+                mkBtn('Add to playlist', () => {
+                    if (typeof window.openAddToPlaylistAtPoint === 'function') {
+                        window.openAddToPlaylistAtPoint(addHit, clientX, clientY);
+                    }
+                }, false);
+            }
+        }
+
+        hub.contextMenuEl.classList.remove('hidden');
+        hub.contextMenuEl.setAttribute('aria-hidden', 'false');
+        hub.contextMenuEl.style.visibility = 'hidden';
+        hub.contextMenuEl.style.left = '0px';
+        hub.contextMenuEl.style.top = '0px';
+        const rect = hub.contextMenuEl.getBoundingClientRect();
+        const w = rect.width || hub.contextMenuEl.offsetWidth;
+        const h = rect.height || hub.contextMenuEl.offsetHeight;
+        const pos = this.clampContextMenuPos(clientX, clientY, w, h);
+        hub.contextMenuEl.style.left = pos.l + 'px';
+        hub.contextMenuEl.style.top = pos.t + 'px';
+        hub.contextMenuEl.style.visibility = '';
+    }
+
+    handleContextMenu(e) {
+        const hub = this.state.hub;
+        if (e.target.closest && e.target.closest('#player-title') && hub.currentTrackId) {
+            const hit = this.buildHitFromLibraryTrack(hub.currentTrackId);
+            const hasAudio = !!(hub.audio && (hub.audio.currentSrc || hub.audio.src || '').trim());
+            if (hit || hasAudio) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.openContextMenu(e.clientX, e.clientY, {
+                    type: 'now-playing',
+                    trackId: hub.currentTrackId,
+                });
+                return;
+            }
+        }
+        const trackRow = e.target.closest('tr.track-row');
+        if (trackRow) {
+            e.preventDefault();
+            const tid = trackRow.getAttribute('data-track-id');
+            if (!tid) return;
+            this.openContextMenu(e.clientX, e.clientY, {
+                type: 'track',
+                trackId: tid,
+                playlistId: String(hub.playlistId),
+                status: trackRow.getAttribute('data-track-status') || '',
+                playSrc: trackRow.getAttribute('data-play-src') || '',
+                url: trackRow.getAttribute('data-track-url') || '',
+                ytid: trackRow.getAttribute('data-youtube-video-id') || '',
+                title: trackRow.getAttribute('data-title') || '',
+                artist: trackRow.getAttribute('data-artist') || '',
+                album: trackRow.getAttribute('data-album') || '',
+            });
+            return;
+        }
+        const plCard = e.target.closest('.playlist-card');
+        if (plCard) {
+            e.preventDefault();
+            let pid = plCard.getAttribute('data-playlist-id');
+            const pname = plCard.getAttribute('data-playlist-name') || '';
+            if (!pid) {
+                const a = plCard.querySelector('a.playlist-spa-nav');
+                if (a) {
+                    try {
+                        const u = new URL(a.getAttribute('href'), location.origin);
+                        pid = u.searchParams.get('playlist_id') || '';
+                    } catch (x) {}
+                }
+            }
+            if (!pid) return;
+            this.openContextMenu(e.clientX, e.clientY, {
+                type: 'playlist',
+                playlistId: pid,
+                playlistName: pname,
+            });
+        }
+    }
+
+}

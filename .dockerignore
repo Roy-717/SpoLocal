@@ -1,0 +1,12 @@
+.git
+**/__pycache__
+**/*.pyc
+webapp/node_modules
+webapp/.venv
+webapp/dist
+data
+downloads
+ffmpeg
+.env
+**/.env
+!webapp/.env.example

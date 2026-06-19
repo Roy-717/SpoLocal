@@ -1,0 +1,19 @@
+{
+  "name": "spolocal-webapp",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build:css": "tailwindcss -i ./styles/tailwind-input.css -o ./static/app.css --minify",
+    "watch:css": "tailwindcss -i ./styles/tailwind-input.css -o ./static/app.css --watch",
+    "build:pwa": "vite build",
+    "dev:pwa": "vite dev",
+    "build": "npm run build:css && npm run build:pwa"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17",
+    "vite": "^6.0.11",
+    "vite-plugin-pwa": "^0.21.1"
+  }
+}

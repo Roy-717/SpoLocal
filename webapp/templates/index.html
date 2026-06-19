@@ -1,0 +1,421 @@
+<!--
+  Root page template for SpoLocal.
+  Defines shell chrome and mounts Jinja-rendered sections used by scripts.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="/static/icons/spolocal-logo.png" />
+    <title>SpoLocal</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script>window.__likedPlaylistId = {{ liked_playlist_id | tojson }};</script>
+    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css">
+</head>
+<body class="font-sans h-screen flex flex-col overflow-hidden">
+    <!-- Top bar -->
+    <div class="h-16 bg-[#181818] border-b border-[#282828] flex items-center px-3 sm:px-6 relative z-40 gap-2">
+        <div class="flex items-center gap-x-2 sm:gap-x-3 shrink-0">
+            <button type="button" id="mobile-open-nav"
+                    class="lg:hidden p-2 rounded-md text-[#B3B3B3] hover:text-white hover:bg-[#282828]"
+                    aria-label="Open playlists"
+                    aria-expanded="false"
+                    aria-controls="sidebar-playlists">
+                <i class="fa-solid fa-bars text-lg" aria-hidden="true"></i>
+            </button>
+            <img src="/static/icons/spolocal-logo.png" alt="SpoLocal" class="w-10 h-10 sm:w-14 sm:h-14 bg-[#181818]">
+            <span class="text-base sm:text-2xl font-bold tracking-tighter truncate max-w-[6rem] sm:max-w-none">SpoLocal</span>
+        </div>
+        <div class="flex-1 max-w-xl mx-auto min-w-0">
+            <form id="top-import-form" action="/playlists/import" method="post" class="flex items-center gap-1 sm:gap-2">
+                <div class="relative w-full min-w-0">
+                    <input id="top-import-input" type="text" name="spotify_url"
+                           placeholder="Search or paste a link"
+                           class="search-input w-full rounded-full text-xs sm:text-sm py-2 sm:py-2.5 px-4">
+                </div>
+                <button type="submit"
+                        title="Search (text) or import from a link"
+                        class="h-10 w-10 sm:h-auto sm:w-auto shrink-0 rounded-full bg-[#1DB954] hover:bg-[#1ed760] text-black sm:px-5 sm:py-2.5 text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-x-2">
+                    <i class="fa-solid fa-magnifying-glass text-base" aria-hidden="true"></i>
+                    <span class="hidden sm:inline">Search</span>
+                </button>
+            </form>
+        </div>
+        <div class="shrink-0 flex items-center">
+            <button type="button" id="mobile-open-dl"
+                    class="p-2 rounded-md text-[#B3B3B3] hover:text-white hover:bg-[#282828]"
+                    aria-label="Open downloads"
+                    aria-expanded="false"
+                    aria-controls="sidebar-downloads">
+                <i class="fa-solid fa-download text-lg" aria-hidden="true"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Global song-search overlay panel (shown when top bar input is plain text) -->
+    <div id="global-search-panel" class="hidden fixed top-16 left-0 right-0 z-30 bg-[#181818] border-b border-[#282828] shadow-2xl flex flex-col lg:ml-80 max-h-[60vh]">
+        <!-- header -->
+        <div class="flex items-center justify-between px-6 pt-4 pb-2 shrink-0">
+            <span id="global-search-label" class="text-sm font-semibold text-[#B3B3B3] min-w-0 truncate pr-4"></span>
+            <button type="button" id="global-search-close" class="text-[#727272] hover:text-white text-lg leading-none px-1 shrink-0" aria-label="Close search">✕</button>
+        </div>
+        <div id="global-search-msg" class="text-xs text-[#727272] hidden px-6 pb-2 shrink-0"></div>
+        <!-- scrollable results -->
+        <div id="global-search-list" class="flex-1 overflow-y-auto px-4 sm:px-6 min-h-0"></div>
+        <!-- pager — always visible at the bottom -->
+        <div id="global-search-pager" class="hidden shrink-0 flex items-center justify-between px-6 py-3 border-t border-[#282828]">
+            <button id="global-prev-btn" class="px-3 py-1.5 text-xs rounded bg-[#282828] hover:bg-[#3E3E3E] disabled:opacity-30 disabled:cursor-not-allowed">← Prev</button>
+            <span id="global-page-label" class="text-xs text-[#727272]"></span>
+            <button id="global-next-btn" class="px-3 py-1.5 text-xs rounded bg-[#282828] hover:bg-[#3E3E3E] disabled:opacity-30 disabled:cursor-not-allowed">Next →</button>
+        </div>
+    </div>
+
+    <!-- Spotify-style "Add to playlist" flyout (opened from search cards) -->
+    <div id="add-to-playlist-popover"
+         class="hidden fixed z-[100] flex w-[280px] flex-col rounded-md border border-[#404040] bg-[#282828] shadow-2xl overflow-hidden"
+         style="max-height: min(420px, 72vh);"
+         role="dialog"
+         aria-label="Add to playlist">
+        <div class="shrink-0 border-b border-[#404040] p-2">
+            <div class="relative">
+                <i class="fa-solid fa-magnifying-glass pointer-events-none absolute left-2.5 top-2.5 text-[11px] text-[#b3b3b3]"></i>
+                <input type="text" id="atp-filter" autocomplete="off" placeholder="Find a playlist"
+                       class="w-full rounded border-0 bg-[#3e3e3e] py-2 pl-8 pr-2 text-sm text-white placeholder-[#a7a7a7] focus:outline-none focus:ring-1 focus:ring-white/25">
+            </div>
+        </div>
+        <button type="button" id="atp-new-toggle"
+                class="flex w-full shrink-0 items-center gap-3 px-3 py-2.5 text-left text-sm text-white hover:bg-[#3e3e3e]">
+            <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#b3b3b3] text-white">
+                <i class="fa-solid fa-plus text-xs"></i>
+            </span>
+            <span>New playlist</span>
+        </button>
+        <div id="atp-new-row" class="hidden shrink-0 border-b border-[#404040] px-2 pb-2">
+            <form id="atp-new-form" method="post" action="/playlists" class="flex gap-2">
+                <input type="text" name="name" id="atp-new-name" required placeholder="Playlist name"
+                       class="min-w-0 flex-1 rounded border-0 bg-[#3e3e3e] px-2 py-1.5 text-sm text-white placeholder-[#727272]">
+                <button type="submit" class="shrink-0 rounded bg-white px-3 py-1.5 text-xs font-semibold text-black hover:bg-[#eee]">
+                    Create
+                </button>
+            </form>
+        </div>
+        <div id="atp-scroll" class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
+            <div id="atp-list-inner" class="flex flex-col"></div>
+        </div>
+    </div>
+    <div id="playlist-edit-modal"
+         class="isolate hidden fixed inset-0 z-[10050] flex items-center justify-center p-4"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="playlist-edit-heading">
+        <div id="playlist-edit-modal-backdrop" class="absolute inset-0 bg-black/65"></div>
+        <div class="relative z-10 w-full max-w-md rounded-xl border border-[#3E3E3E] bg-[#282828] shadow-2xl p-5 text-left">
+            <div class="flex items-start justify-between gap-3 mb-4">
+                <h2 id="playlist-edit-heading" class="text-lg font-bold text-white">Edit playlist</h2>
+                <button type="button" id="playlist-edit-close-x"
+                        class="text-[#727272] hover:text-white p-1 rounded-full hover:bg-[#3E3E3E] shrink-0" aria-label="Close">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <p id="playlist-edit-error" class="hidden text-sm text-red-400 mb-3"></p>
+            <input type="hidden" id="playlist-edit-id" value="">
+            <label class="block text-xs font-semibold text-[#B3B3B3] uppercase tracking-wider mb-1.5" for="playlist-edit-name-input">Name</label>
+            <input type="text" id="playlist-edit-name-input" autocomplete="off"
+                   class="w-full rounded-lg bg-[#3E3E3E] border border-[#535353] text-white text-sm px-3 py-2 mb-4 placeholder-[#727272] focus:border-[#1DB954] focus:outline-none">
+            <label class="block text-xs font-semibold text-[#B3B3B3] uppercase tracking-wider mb-1.5" for="playlist-edit-bio-input">Description</label>
+            <textarea id="playlist-edit-bio-input" rows="4" maxlength="8000"
+                      class="w-full rounded-lg bg-[#3E3E3E] border border-[#535353] text-white text-sm px-3 py-2 mb-5 placeholder-[#727272] focus:border-[#1DB954] focus:outline-none resize-y"
+                      placeholder="Add a short description…"></textarea>
+            <div class="flex flex-wrap items-center gap-2">
+                <button type="button" id="playlist-edit-save"
+                        class="px-5 py-2 text-sm font-semibold rounded-full bg-[#1DB954] text-black hover:bg-[#1ed760]">
+                    Save
+                </button>
+                <button type="button" id="playlist-edit-cancel"
+                        class="px-4 py-2 text-sm font-semibold rounded-full border border-[#727272] text-[#B3B3B3] hover:text-white hover:border-white">
+                    Cancel
+                </button>
+                <button type="button" id="playlist-edit-delete"
+                        class="ml-auto px-4 py-2 text-sm font-semibold rounded-full border border-red-500/60 text-red-400 hover:bg-red-500/10">
+                    Delete playlist
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="context-menu"
+         class="hidden fixed z-[9999] min-w-[11rem] rounded-md border border-[#404040] bg-[#282828] py-1 shadow-2xl text-sm text-white"
+         role="menu"
+         aria-hidden="true">
+        <div id="context-menu-items" class="flex flex-col"></div>
+    </div>
+
+    <audio id="song-preview-audio" preload="none" class="hidden"></audio>
+
+    <div class="relative flex flex-1 min-h-0">
+        <div id="mobile-nav-backdrop" class="mobile-sheet-backdrop" aria-hidden="true"></div>
+        <div id="mobile-dl-backdrop" class="mobile-sheet-backdrop" aria-hidden="true"></div>
+        <div id="mobile-queue-backdrop" class="mobile-sheet-backdrop" aria-hidden="true"></div>
+
+        <!-- Sidebar -->
+        <aside id="sidebar-playlists" class="bg-[#181818] border-[#282828] p-3 flex flex-col shrink-0 min-h-0 min-w-0 overflow-hidden">
+            <div class="flex items-center justify-between mb-2 pb-2 border-b border-[#282828] shrink-0">
+                <span class="text-xs font-semibold text-[#B3B3B3] uppercase tracking-wider">Playlists</span>
+                <button type="button" id="mobile-close-nav" class="lg:hidden p-2 rounded-md text-[#727272] hover:text-white hover:bg-[#282828]" aria-label="Close playlists">
+                    <i class="fa-solid fa-xmark text-lg" aria-hidden="true"></i>
+                </button>
+            </div>
+            <div class="px-3 py-2">
+                <button onclick="document.getElementById('create-form').classList.toggle('hidden')"
+                        class="w-full flex items-center gap-x-3 px-4 py-2.5 text-sm hover:bg-[#282828] rounded-md">
+                    <i class="fa-solid fa-plus w-4"></i>
+                    <span>Create playlist</span>
+                </button>
+            </div>
+
+            <!-- Create playlist form -->
+            <form id="create-form" action="/playlists" method="post" class="hidden px-3 pb-3">
+                <input type="text" name="name" placeholder="Playlist name"
+                       class="w-full bg-[#242424] border border-[#3E3E3E] rounded px-3 py-2 text-sm mb-2">
+                <button type="submit"
+                        class="w-full py-2 text-sm bg-white text-black rounded font-semibold">Create</button>
+            </form>
+
+            <div class="mt-2 px-3 text-xs text-[#727272] font-medium tracking-wider">PLAYLISTS</div>
+
+            <div class="mt-1 flex-1 min-h-0 overflow-y-auto pr-1 space-y-0.5">
+                {% for row in playlist_nav %}
+                <div class="group playlist-card rounded-md text-sm {{ 'nav-active' if row.active else '' }}"
+                     data-playlist-id="{{ row.id }}"
+                     data-playlist-name="{{ row.name|e }}">
+                    <a href="/?playlist_id={{ row.id }}"
+                       class="playlist-spa-nav flex w-full min-w-0 items-center gap-x-3 px-3 py-2 rounded-md {{ '' if row.active else 'hover:bg-[#282828]' }}">
+                        <div class="h-10 w-10 shrink-0 overflow-hidden rounded bg-[#1a1a1a]">
+                            {% set cover_tiles = row.cover_tiles %}
+                            {% include "partials/playlist_art_grid.html" %}
+                        </div>
+                        <span class="truncate">{{ row.name }}</span>
+                    </a>
+                </div>
+                {% endfor %}
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <div class="flex-1 flex flex-col overflow-hidden min-w-0">
+            {% if current %}
+            <div id="spa-main" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {% include "partials/playlist_main.html" %}
+            </div>
+            {% else %}
+            <div class="flex-1 flex items-center justify-center text-[#727272]">
+                <div class="text-center">
+                    <i class="fa-solid fa-music text-6xl mb-4"></i>
+                    <p class="text-xl">Create or import a playlist to get started.</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Download queue sidebar -->
+        <aside id="sidebar-downloads" class="bg-[#181818] border-[#282828] p-3 flex flex-col gap-3 min-h-0 min-w-0 shrink-0 overflow-hidden">
+            <div class="flex items-center justify-between shrink-0 gap-3">
+                <div class="font-semibold text-sm truncate min-w-0">Downloads</div>
+                <span id="dl-queue-count" class="text-xs px-2 py-0.5 bg-[#282828] rounded text-[#B3B3B3] whitespace-nowrap shrink-0">
+                    {% set n = service.downloads_remaining_count() %}
+                    {% if n %}{{ n }} left{% else %}Idle{% endif %}
+                </span>
+            </div>
+            <div class="dl-drawer-body flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto lg:overflow-hidden">
+                <div id="dl-progress-list" class="flex flex-col gap-2 max-lg:flex-none max-lg:overflow-visible lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+                    <p class="text-xs text-[#727272]" id="dl-idle-msg">Nothing downloading right now.</p>
+                </div>
+                <div class="dl-errors-panel flex shrink-0 flex-col gap-2 border-t border-[#282828] pt-3 min-h-0 max-lg:max-h-none lg:max-h-[38vh] lg:overflow-hidden">
+                    <div class="flex items-center justify-between gap-3 shrink-0">
+                        <div class="font-semibold text-sm text-[#B3B3B3] min-w-0">Download errors</div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <span id="dl-error-count" class="text-xs px-2 py-0.5 bg-[#282828] rounded text-[#B3B3B3] tabular-nums">0</span>
+                            <button type="button" id="dl-retry-all-errors"
+                                    class="inline-flex items-center justify-center min-h-[2rem] min-w-[2rem] rounded-md text-[#B3B3B3] hover:text-white hover:bg-[#3E3E3E] disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-[#B3B3B3]"
+                                    title="Retry all failed downloads"
+                                    aria-label="Retry all failed downloads"
+                                    disabled>
+                                <i class="fa-solid fa-arrows-rotate text-xs" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="dl-error-list" class="flex flex-col gap-2 pr-0.5 max-lg:flex-none max-lg:overflow-visible lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+                        <p class="text-xs text-[#727272]" id="dl-error-empty">No failed downloads.</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    {% if current %}
+    <audio id="player-audio" preload="auto" playsinline style="position:absolute;width:0;height:0;opacity:0;pointer-events:none;"></audio>
+
+    <div id="lyrics-panel"
+         class="hidden fixed left-0 right-0 top-16 lg:left-[20rem] lg:right-[20rem] z-[35] flex flex-col border-t border-[#282828] shadow-[0_-8px_32px_rgba(0,0,0,0.5)]"
+         style="background-color: #121212;">
+        <div class="w-full flex flex-col min-h-0 flex-1" style="padding: 1rem 0 0.75rem 1.25rem;">
+            <div class="flex items-center justify-between gap-3 mb-3 shrink-0">
+                <div class="flex items-center gap-3 min-w-0">
+                    <span id="lyrics-title" class="text-xs font-semibold uppercase tracking-wider shrink-0">Lyrics</span>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    <div id="lyrics-mode-switch" class="inline-flex rounded-full p-0.5" style="background-color: rgba(255,255,255,0.1);">
+                        <button type="button" id="lyrics-tab-read" class="lyrics-tab px-3 py-1.5 text-xs font-semibold rounded-full">Read</button>
+                        <button type="button" id="lyrics-tab-edit" class="lyrics-tab px-3 py-1.5 text-xs font-semibold rounded-full">Edit</button>
+                    </div>
+                </div>
+            </div>
+            <div id="lyrics-view-wrap" class="flex-1 min-h-0 overflow-y-auto pr-1">
+                <p id="lyrics-empty-hint" class="hidden text-sm text-center py-8 leading-relaxed opacity-70">
+                    No lyrics file yet. After the track is downloaded you can paste your own lyrics in <strong>Edit</strong>, or add a <code class="text-[#1DB954]">.lrc</code> / <code class="text-[#1DB954]">.lyrics.txt</code> next to the audio file.
+                </p>
+                <p id="lyrics-no-audio-hint" class="hidden text-sm text-center py-8 leading-relaxed opacity-70">
+                    Lyrics are saved next to the audio file. Finish downloading this track, then open <strong>Edit</strong> to add lyrics.
+                </p>
+                <pre id="lyrics-body" class="whitespace-pre-wrap font-sans text-sm leading-relaxed pb-2 transition-colors duration-300"></pre>
+            </div>
+            <div id="lyrics-edit-wrap" class="hidden flex-1 min-h-0 flex flex-col gap-2 pb-2">
+                <p id="lyrics-edit-disabled" class="hidden text-xs text-center py-2 opacity-60">Download the track to enable saving.</p>
+                <!-- Plain text editor (for non-LRC or embedded lyrics) -->
+                <textarea id="lyrics-editor"
+                          rows="8"
+                          class="hidden w-full flex-1 min-h-[8rem] rounded-lg border border-[#3E3E3E] text-sm px-3 py-2.5 placeholder-[#727272] focus:border-[#1DB954] focus:outline-none resize-y transition-colors duration-300"
+                          placeholder="Paste lyrics here…"></textarea>
+                <!-- LRC editor (for synced lyrics with timestamps) -->
+                <div id="lrc-editor" class="hidden flex-1 min-h-0 flex flex-col gap-2">
+                    <div class="flex items-center justify-between gap-2 px-1">
+                        <span class="text-xs text-[#B3B3B3]">Click timestamps to adjust</span>
+                        <div class="flex items-center gap-1.5">
+                            <button type="button" id="lrc-shift-minus" class="lrc-shift-btn" title="Subtract 1 second from all timestamps">− All</button>
+                            <button type="button" id="lrc-shift-plus" class="lrc-shift-btn" title="Add 1 second to all timestamps">+ All</button>
+                        </div>
+                    </div>
+                    <div id="lrc-lines-container" class="flex-1 min-h-0 overflow-y-auto pr-1">
+                        <!-- LRC lines will be rendered here -->
+                    </div>
+                </div>
+                <div id="lyrics-edit-actions" class="hidden flex justify-end gap-2">
+                    <button type="button" id="lyrics-cancel-edit" class="px-4 py-2 text-xs font-semibold rounded-full border border-[#3E3E3E] text-[#B3B3B3] hover:text-white">
+                        Cancel
+                    </button>
+                    <button type="button" id="lyrics-save-btn" class="px-5 py-2 text-xs font-semibold rounded-full bg-[#1DB954] text-black hover:bg-[#1ed760]">
+                        Save lyrics
+                    </button>
+                </div>
+                <p id="lyrics-save-status" class="hidden text-center text-xs text-[#1DB954]">Saved to your library folder.</p>
+            </div>
+        </div>
+    </div>
+
+    <aside id="sidebar-queue" class="bg-[#181818] border-[#282828] p-3 flex flex-col gap-3 min-h-0 min-w-0 shrink-0 overflow-hidden" aria-hidden="true">
+        <div class="flex items-center justify-between shrink-0 gap-3">
+            <div class="font-semibold text-sm truncate min-w-0">Queue</div>
+            <div class="flex shrink-0 items-center gap-0.5">
+                <button type="button" id="queue-reload"
+                        class="rounded-full p-2 text-sm text-[#727272] hover:bg-[#282828] hover:text-white"
+                        title="Reload queue"
+                        aria-label="Reload queue (clear custom order)">
+                    <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+                </button>
+                <button type="button" id="queue-close" class="rounded-full p-2 text-sm text-[#727272] hover:bg-[#282828] hover:text-white shrink-0" aria-label="Close queue">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </div>
+        <div class="queue-drawer-body flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div id="queue-list" class="min-h-0 flex-1 overflow-y-auto pr-1"></div>
+        </div>
+    </aside>
+
+    <div id="player-bar"
+         class="player-bar-grid fixed left-0 right-0 bottom-0 z-40 border-t border-[#282828] bg-[#181818]">
+        <div class="pb-meta flex shrink-0 items-center gap-2 sm:gap-3 min-w-0 flex-nowrap">
+            <div id="player-cover-wrap" class="no-art relative w-11 h-11 sm:w-14 sm:h-14 shrink-0 rounded overflow-hidden bg-[#282828]">
+                <img id="player-cover" src="" alt="" class="w-full h-full object-cover hidden">
+                <div id="player-cover-fallback" class="flex w-full h-full items-center justify-center text-[#727272]">
+                    <i class="fa-solid fa-music text-lg sm:text-xl"></i>
+                </div>
+            </div>
+            <div class="min-w-0 flex-1">
+                <div id="player-title" class="font-semibold truncate text-xs sm:text-sm cursor-pointer" style="cursor: pointer !important;">—</div>
+                <span id="player-stream-badge" class="hidden text-[10px] sm:text-xs shrink-0 w-3.5 sm:w-4 text-center" style="color:#1DB954; margin-left:4px; margin-right:4px">Ⓢ</span>
+                <div id="player-subtitle" class="text-[#B3B3B3] truncate text-[11px] sm:text-xs">—</div>
+            </div>
+            <button type="button" id="player-like-mobile"
+                    class="flex lg:hidden shrink-0 items-center justify-center h-10 w-10 rounded-full hover:opacity-90 disabled:opacity-40 disabled:pointer-events-none player-control-btn--muted text-[#B3B3B3]"
+                    title="Like" aria-pressed="false" disabled aria-label="Like">
+                <i id="player-like-icon-mobile" class="fa-regular fa-heart text-[1.35rem] leading-none" aria-hidden="true"></i>
+            </button>
+            <button type="button" id="btn-lyrics-mobile"
+                    class="player-control-btn--muted lg:hidden shrink-0 h-9 w-9 rounded-full hover:text-white text-base leading-none inline-flex items-center justify-center"
+                    title="Lyrics" aria-pressed="false">
+                <i class="fa-solid fa-music text-[14px] pointer-events-none" aria-hidden="true"></i>
+            </button>
+            <button type="button" id="btn-queue-mobile"
+                    class="player-control-btn--muted lg:hidden shrink-0 h-9 w-9 rounded-full hover:text-white text-base leading-none inline-flex items-center justify-center"
+                    title="Queue" aria-pressed="false" aria-expanded="false" aria-controls="sidebar-queue" aria-label="Queue">
+                <i class="fa-solid fa-list-ul text-[14px] pointer-events-none" aria-hidden="true"></i>
+            </button>
+        </div>
+        <div class="pb-mid flex flex-col lg:flex-col-reverse items-center justify-center gap-1 sm:gap-1.5 min-w-0 w-full">
+            <div class="flex w-full max-w-2xl items-center gap-2 px-0.5 sm:px-1 mx-auto player-seek-row">
+                <span id="player-time" class="text-[10px] text-[#727272] tabular-nums w-8 sm:w-9 shrink-0 text-right">0:00</span>
+                <input type="range" id="player-seek" min="0" max="1000" value="0" class="min-w-0 flex-1 h-4 sm:h-auto">
+                <span id="player-duration" class="text-[10px] text-[#727272] tabular-nums w-8 sm:w-9 shrink-0">0:00</span>
+            </div>
+            <div class="flex items-center justify-center gap-0.5 sm:gap-2 shrink-0 flex-nowrap">
+                <button type="button" id="player-shuffle" class="player-control-btn--muted w-10 h-10 lg:w-9 lg:h-9 rounded-full hover:text-white text-lg leading-none shrink-0" title="Shuffle" aria-pressed="false">
+                    <i class="fa-solid fa-shuffle text-[15px]"></i>
+                </button>
+                <button type="button" id="player-prev" class="w-11 h-11 lg:w-10 lg:h-10 rounded-full text-[#B3B3B3] hover:text-white shrink-0" title="Previous">
+                    <i class="fa-solid fa-backward-step text-base"></i>
+                </button>
+                <button type="button" id="player-main-play" class="w-12 h-12 lg:w-11 lg:h-11 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 shrink-0" title="Play / Pause">
+                    <i id="player-main-play-icon" class="fa-solid fa-play text-lg lg:text-base pl-0.5 sm:pl-1"></i>
+                </button>
+                <button type="button" id="player-next" class="w-11 h-11 lg:w-10 lg:h-10 rounded-full text-[#B3B3B3] hover:text-white shrink-0" title="Next">
+                    <i class="fa-solid fa-forward-step text-base"></i>
+                </button>
+                <span id="player-repeat-wrap" class="shrink-0">
+                    <button type="button" id="player-repeat" class="player-control-btn--muted w-10 h-10 lg:w-9 lg:h-9 rounded-full hover:text-white text-lg leading-none" title="Repeat: off" aria-pressed="false">
+                        <i class="fa-solid fa-repeat text-[15px] lg:text-[13px]"></i>
+                    </button>
+                    <span id="player-repeat-one-badge" class="hidden" aria-hidden="true">1</span>
+                </span>
+                <button type="button" id="player-like"
+                        class="player-like--desktop player-control-btn--muted w-10 h-10 lg:w-9 lg:h-9 rounded-full hover:text-white text-lg leading-none shrink-0 disabled:opacity-40 disabled:pointer-events-none"
+                        title="Like" aria-pressed="false" disabled>
+                    <i id="player-like-icon" class="fa-regular fa-heart text-[15px] lg:text-[13px]" aria-hidden="true"></i>
+                </button>
+            </div>
+        </div>
+        <div class="pb-vol flex min-w-0 w-full items-center justify-end text-[#B3B3B3]" title="Volume">
+                <button type="button" id="btn-lyrics-desktop" class="player-control-btn--muted h-9 w-5 shrink-0 inline-flex items-center justify-center rounded-full hover:text-white text-lg leading-none"
+                        title="Lyrics" aria-pressed="false">
+                    <i class="fa-solid fa-music text-[13px] pointer-events-none" aria-hidden="true"></i>
+                </button>
+                <button type="button" id="btn-queue-desktop" class="player-control-btn--muted h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-full hover:text-white text-lg leading-none"
+                        title="Queue" aria-pressed="false" aria-expanded="false" aria-controls="sidebar-queue" aria-label="Queue">
+                    <i class="fa-solid fa-list-ul text-[13px] pointer-events-none" aria-hidden="true"></i>
+                </button>
+            <i id="player-volume-icon" class="fa-solid fa-volume-high text-[10px] sm:text-xs shrink-0 w-3.5 sm:w-4 text-center" style="margin-left:3px;margin-right:7px" aria-hidden="true"></i>
+            <input type="range" id="player-volume" min="0" max="100" value="100" class="shrink-0 h-4 sm:h-auto ml-2" aria-label="Volume">
+        </div>
+    </div>
+
+    <script type="application/json" id="playlist-json">{{ current_tracks_payload | default([], true) | tojson | safe }}</script>
+    <script type="application/json" id="spolocal-player-boot">{{ {"playlistId": current.id} | tojson | safe }}</script>
+    <script type="module" src="/static/js/PlaylistSession.mjs"></script>
+    {% endif %}
+    <script type="module" src="/static/pwa/pwa-entry.js"></script>
+    <script src="/static/js/spolocal_chrome.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+<!--
+  Playlist art tile renderer.
+  Builds a 2x2 cover grid from provided artwork URLs or placeholders.
+-->
+{# 2×2 from first four tracks. Pass ``cover_tiles`` (URLs) or ``playlist`` for legacy paths. #}
+<div class="playlist-art-grid grid h-full w-full min-h-0 min-w-0 shrink-0 grid-cols-2 overflow-hidden rounded bg-[#1a1a1a]"
+     style="grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 1px;"
+     aria-hidden="true">
+    {% if cover_tiles is defined %}
+        {% for url in (cover_tiles or [])[:4] %}
+        <div class="playlist-art-grid__cell h-full w-full bg-[#282828]">
+            <img src="{{ url }}"
+                 alt=""
+                 loading="lazy" decoding="async"
+                 onerror="this.onerror=null;this.style.opacity='0'">
+        </div>
+        {% endfor %}
+        {% for _ in range(4 - ((cover_tiles or [])[:4]|length)) %}
+        <div class="h-full w-full min-h-0 min-w-0 bg-[#282828]" aria-hidden="true"></div>
+        {% endfor %}
+    {% else %}
+        {% for t in playlist.tracks[:4] %}
+        <div class="playlist-art-grid__cell h-full w-full bg-[#282828]">
+            <img src="/playlists/{{ playlist.id }}/tracks/{{ t.id }}/cover"
+                 alt=""
+                 loading="lazy" decoding="async"
+                 onerror="this.onerror=null;this.style.opacity='0'">
+        </div>
+        {% endfor %}
+        {% for _ in range(4 - (playlist.tracks[:4]|length)) %}
+        <div class="h-full w-full min-h-0 min-w-0 bg-[#282828]" aria-hidden="true"></div>
+        {% endfor %}
+    {% endif %}
+</div>

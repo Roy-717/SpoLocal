@@ -1,0 +1,20 @@
+# Port 8000 HTTPS — one listener, several identities on the cert (fixes Firefox
+# SSL_ERROR_INTERNAL_ERROR_ALERT on localhost when using only https://:8000).
+# Catch-all https://:8000 still matches LAN/public IP so the site is routed (not blank).
+#
+# Chrome "can't provide a secure connection" on https://YOUR_PUBLIC_IP:8000:
+# tls internal certs do not include arbitrary public IPs. Use a hostname (DuckDNS,
+# etc.) and add it below, or use Tailscale/SSH tunnel instead of raw public IP.
+{
+	admin off
+	default_sni localhost
+	servers {
+		protocols h1 h2
+	}
+}
+
+https://localhost:8000, https://127.0.0.1:8000, https://:8000 {
+	tls internal
+	encode gzip zstd
+	reverse_proxy spolocal:8000
+}

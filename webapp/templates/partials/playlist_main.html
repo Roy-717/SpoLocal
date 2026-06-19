@@ -1,0 +1,114 @@
+<!--
+  Playlist content shell.
+  Renders headers, metadata, and track rows for JS actions.
+-->
+<div id="playlist-scroll-root" class="flex-1 min-h-0 overflow-y-auto p-4 pb-[calc(var(--app-player-inset-mobile)_+_0.75rem)] lg:pb-24">
+    <div class="p-6 border-b border-[#282828] -mx-4 -mt-4 mb-4">
+    <script type="application/json" id="spa-playlist-edit-json">
+        {{ {'id': current.id, 'name': current.name, 'bio': current.bio or ''} | tojson }}
+    </script>
+    <div class="flex items-end justify-between gap-x-4 flex-wrap">
+        <div class="flex items-end gap-x-4 min-w-0">
+            <div class="relative w-28 shrink-0 aspect-square">
+                <div class="relative h-full w-full overflow-hidden rounded-md bg-[#1a1a1a]">
+                    {% set cover_tiles = current_cover_tiles %}
+                    {% set playlist = current %}
+                    {% include "partials/playlist_art_grid.html" %}
+                </div>
+                <button type="button"
+                        id="playlist-header-play"
+                        class="absolute z-[1] bg-white text-black shadow-lg flex items-center justify-center hover:scale-105 hover:bg-gray-100 transition-all"
+                        style="bottom: -10px; right: -10px; width: 54px; height: 54px; border-radius: 50%; aspect-ratio: 1;"
+                        title="Play playlist">
+                    <i class="fa-solid fa-play text-xl pl-1"></i>
+                </button>
+            </div>
+            <div class="min-w-0">
+                <div class="text-xs text-[#727272]">PLAYLIST</div>
+                <h1 class="text-4xl font-bold tracking-tighter truncate" id="spa-playlist-title">{{ current.name }}</h1>
+                <p id="spa-playlist-bio"
+                   class="text-sm text-[#B3B3B3] mt-1 max-w-2xl whitespace-pre-wrap {% if not current.bio %}hidden{% endif %}">{{ current.bio or '' }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+    <div class="w-full max-w-none min-w-0">
+        {% if current.tracks %}
+        <table id="playlist-table" class="w-full text-sm table-fixed">
+            <colgroup>
+                <col data-col="0" style="width: 2rem;">
+                <col data-col="1" style="width: 2.5rem;">
+                <col data-col="2" style="width: 28%;">
+                <col data-col="3" style="width: 22%;">
+            </colgroup>
+            <thead>
+                <tr class="text-[#727272] text-left border-b border-[#282828]">
+                    <th class="py-3 pl-0 pr-0 text-left" data-col="0">#</th>
+                    <th class="py-3 pl-1 pr-3" data-col="1" aria-label="Art"></th>
+                    <th class="py-3 px-3" data-col="2">TITLE</th>
+                    <th class="py-3 px-3" data-col="3">ARTIST</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for track in current.tracks %}
+                <tr class="track-row border-b border-[#282828]{% if track.play_src() %} track-row--playable{% endif %}"
+                    data-track-id="{{ track.id }}"
+                    data-title="{{ track.title }}"
+                    data-artist="{{ track.artist }}"
+                    data-album="{{ (track.album or '')|e }}"
+                    data-play-src="{{ track.play_src() or '' }}"
+                    data-track-status="{{ track.status.value }}"
+                    data-track-url="{{ (track.url or '')|e }}"
+                    data-youtube-video-id="{{ track.youtube_video_id or '' }}">
+                    <td class="py-2 pl-0 pr-0 align-middle">
+                        {% if track.play_src() %}
+                        <div class="track-index-slot relative flex h-8 w-8 items-center justify-center">
+                            <span class="track-row-index pointer-events-none absolute inset-0 flex items-center justify-center text-[#727272] tabular-nums">{{ loop.index }}</span>
+                            <button type="button"
+                                    class="track-play track-play--row absolute inset-0 z-[1] flex h-8 w-8 items-center justify-center rounded-full bg-white text-black transition-opacity"
+                                    title="Play">
+                                <i class="fa-solid fa-play text-[10px] pl-0.5"></i>
+                            </button>
+                        </div>
+                        {% else %}
+                        <span class="track-row-index flex items-center justify-center h-8 w-8 text-[#727272] tabular-nums">{{ loop.index }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="py-2 pl-1 pr-3 align-middle">
+                        <div class="h-10 w-10 overflow-hidden rounded bg-[#1a1a1a]" aria-hidden="true">
+                            <img src="/playlists/{{ current.id }}/tracks/{{ track.id }}/cover"
+                                 alt=""
+                                 loading="lazy"
+                                 decoding="async"
+                                 class="h-full w-full object-cover"
+                                 onerror="this.onerror=null;this.style.opacity='0'">
+                        </div>
+                    </td>
+                    <td class="py-3 px-1 font-medium truncate" title="{{ track.title|e }}">{{ track.title }}</td>
+                    <td class="py-3 px-1 text-[#B3B3B3] truncate" title="{{ track.artist|e }}">{{ track.artist }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="text-center py-12 text-[#727272]">
+            <i class="fa-solid fa-music text-4xl mb-3"></i>
+            <p>No tracks yet. Use the top search bar to add songs or import from Spotify.</p>
+        </div>
+        {% endif %}
+
+<style>
+        #playlist-table th {
+            position: static;
+            user-select: none;
+        }
+    </style>
+
+        <div id="playlist-recommendations-section" class="mt-12 pt-8 border-t border-[#282828]">
+            <h2 class="text-lg font-bold text-white mb-0.5">Recommended for you</h2>
+            <p class="text-xs text-[#727272] mb-4">Based on this playlist and your library tracks</p>
+            <p id="playlist-recommendations-msg" class="text-sm text-[#727272] hidden mb-4"></p>
+            <div id="playlist-recommendations-grid" class="w-full min-h-[4rem]"></div>
+        </div>
+    </div>
+</div>

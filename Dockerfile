@@ -29,6 +29,8 @@ WORKDIR /app/webapp
 RUN pip install --no-cache-dir -r requirements.txt
 
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# No --reload in production: volume-mounted sources would restart mid-request and cancel covers.
+CMD ["sh", "-c", "rm -rf __pycache__ && exec uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]

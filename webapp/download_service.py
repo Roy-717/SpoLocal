@@ -528,15 +528,57 @@ class DownloadService:
                 return pl
         return None
 
+    def _liked_source_track(self, track: Track) -> Optional[Track]:
+        spid = (track.liked_source_playlist_id or "").strip()
+        stid = (track.liked_source_track_id or "").strip()
+        if not spid or not stid:
+            return None
+        src_pl = self.get_playlist(spid)
+        if not src_pl:
+            return None
+        return src_pl.get_track(stid)
+
+    def _sync_liked_track_media_from_source(self, track: Track) -> bool:
+        """Copy media paths from the liked entry's source track when missing locally."""
+        src = self._liked_source_track(track)
+        if not src:
+            return False
+        sp_pl = self.get_playlist((track.liked_source_playlist_id or "").strip())
+        if sp_pl:
+            self.hydrate_media_paths(sp_pl, persist=False)
+        changed = False
+        if src.media_relpath and not track.media_relpath:
+            track.media_relpath = src.media_relpath
+            changed = True
+        if src.media_variants and not track.media_variants:
+            track.media_variants = dict(src.media_variants)
+            changed = True
+        if src.status == DownloadStatus.done and track.status != DownloadStatus.done:
+            track.status = DownloadStatus.done
+            changed = True
+        return changed
+
     def get_track_audio_path(self, playlist_id: str, track_id: str) -> Optional[Path]:
         pl = self.get_playlist(playlist_id.strip())
         if not pl:
             return None
         self.hydrate_media_paths(pl, persist=False)
         track = pl.get_track(track_id.strip())
-        if not track or not track.media_relpath:
+        if not track:
             return None
-        audio_path = (self.root / "downloads" / track.media_relpath).resolve()
+        media_track = track
+        if self.is_liked_songs_playlist(pl.id):
+            src = self._liked_source_track(track)
+            if src:
+                sp_pl = self.get_playlist((track.liked_source_playlist_id or "").strip())
+                if sp_pl:
+                    self.hydrate_media_paths(sp_pl, persist=False)
+                media_track = src
+            elif self._sync_liked_track_media_from_source(track):
+                media_track = track
+        if not media_track.media_relpath:
+            return None
+        audio_path = (self.root / "downloads" / media_track.media_relpath).resolve()
         downloads_root = (self.root / "downloads").resolve()
         try:
             if audio_path.is_file() and audio_path.is_relative_to(downloads_root):
@@ -903,6 +945,11 @@ class DownloadService:
 
             if fill_albums:
                 changed = self._hydrate_albums_cached(pl, cache_entry, persist) or changed
+
+            if self.is_liked_songs_playlist(pl.id):
+                for t in pl.tracks:
+                    if self._sync_liked_track_media_from_source(t):
+                        changed = True
 
             if changed and persist:
                 self._save_playlists()

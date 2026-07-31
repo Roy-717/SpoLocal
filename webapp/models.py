@@ -80,15 +80,7 @@ class Track:
         return "/media/" + quote(rel, safe="/")
 
     def play_variants(self) -> Dict[str, str]:
-        out: Dict[str, str] = {}
-        for key, rel in (self.media_variants or {}).items():
-            if rel:
-                out[key] = "/media/" + quote(rel, safe="/")
-        if self.media_relpath and not out:
-            inferred = kbps_from_relpath(self.media_relpath)
-            key = str(inferred) if inferred else "192"
-            out[key] = "/media/" + quote(self.media_relpath, safe="/")
-        return out
+        return track_play_variants(self)
 
     def set_media_variant(self, quality: str, relpath: Optional[str]) -> None:
         if not quality or not relpath:
@@ -101,6 +93,19 @@ class Track:
 
     def has_media_variant(self, quality: str) -> bool:
         return bool((self.media_variants or {}).get(str(quality)) or (str(quality) == "192" and self.media_relpath))
+
+
+def track_play_variants(track: Track) -> Dict[str, str]:
+    """Media URLs keyed by kbps (e.g. ``192``). Module helper avoids stale class bytecode in Docker."""
+    out: Dict[str, str] = {}
+    for key, rel in (track.media_variants or {}).items():
+        if rel:
+            out[key] = "/media/" + quote(rel, safe="/")
+    if track.media_relpath and not out:
+        inferred = kbps_from_relpath(track.media_relpath)
+        key = str(inferred) if inferred else "192"
+        out[key] = "/media/" + quote(track.media_relpath, safe="/")
+    return out
 
 
 @dataclass(slots=True)

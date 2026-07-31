@@ -32,7 +32,7 @@ from starlette.staticfiles import NotModifiedResponse, StaticFiles
 from pydantic import BaseModel, Field
 
 from download_service import DownloadService, youtube_video_id_from_url
-from models import Playlist, Track
+from models import Playlist, Track, track_play_variants
 from tag_metadata import extract_cover
 from cover_image import DEFAULT_JPEG_QUALITY, DEFAULT_THUMB_MAX_SIDE, square_thumb_jpeg
 
@@ -302,7 +302,7 @@ _COVER_JPEG_QUALITY = DEFAULT_JPEG_QUALITY
 
 def _track_payload_row(t: Track, *, playback_quality: Optional[str] = None) -> dict[str, Any]:
     st = t.status.value if hasattr(t.status, "value") else str(t.status)
-    variants = t.play_variants()
+    variants = track_play_variants(t)
     preferred = playback_quality or "192"
     play_src = variants.get(preferred) or variants.get("192") or t.play_src()
     if not play_src and variants:
@@ -348,7 +348,7 @@ def _library_pool_payload() -> list[dict[str, Any]]:
     pool: list[dict[str, Any]] = []
     for pl in service.list_playlists():
         for t in pl.tracks:
-            variants = t.play_variants()
+            variants = track_play_variants(t)
             src = variants.get("192") or t.play_src()
             if not src and variants:
                 best_key = sorted(variants.keys(), key=lambda k: int(k) if str(k).isdigit() else 0, reverse=True)[0]

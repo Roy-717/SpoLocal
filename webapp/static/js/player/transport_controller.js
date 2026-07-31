@@ -348,7 +348,12 @@ export class PlaylistTransportController {
 
     library_pool_playable() {
         const hub = this.state.hub;
-        return (Array.isArray(hub.libraryPool) ? hub.libraryPool : []).filter((t) => t && t.play_src);
+        const prefs = window.SpolocalQualityPrefs;
+        return (Array.isArray(hub.libraryPool) ? hub.libraryPool : []).filter((t) => {
+            if (!t) return false;
+            const src = prefs ? prefs.resolvePlaySrc(t) : t.play_src;
+            return !!src;
+        });
     }
 
     pick_random_library_entry(exclude_track_id) {
@@ -366,12 +371,15 @@ export class PlaylistTransportController {
 
     play_random_from_library() {
         const entry = this.pick_random_library_entry(null);
-        if (entry) this.playLibraryEntry(entry);
+        if (entry) void this.playLibraryEntry(entry);
     }
 
-    playLibraryEntry(entry) {
+    async playLibraryEntry(entry) {
         const hub = this.state.hub;
-        if (!hub.audio || !entry || !entry.play_src) return;
+        if (!hub.audio || !entry) return;
+        const prefs = window.SpolocalQualityPrefs;
+        const preliminarySrc = prefs ? prefs.resolvePlaySrc(entry) : entry.play_src;
+        if (!preliminarySrc) return;
         const trackId = String(entry.track_id || '');
         const playlistId = String(entry.playlist_id || '');
         if (!trackId || !playlistId) return;
@@ -383,6 +391,38 @@ export class PlaylistTransportController {
             return;
         }
 
+        this._playGeneration = (this._playGeneration || 0) + 1;
+        const playGen = this._playGeneration;
+        const playback_q = prefs ? String(prefs.playbackKbps()) : '192';
+
+        let t = {
+            id: trackId,
+            title: entry.title || '',
+            artist: entry.artist || '',
+            album: entry.album || '',
+            play_src: entry.play_src,
+            play_variants: entry.play_variants || {},
+            url: entry.url || '',
+            youtube_video_id: entry.youtube_video_id || '',
+        };
+
+        hub.titleEl.textContent = t.title || '—';
+        hub.subEl.textContent = t.artist || '—';
+
+        if (prefs && !prefs.hasVariant(t, playback_q)) {
+            const ready = await this.ensurePlaybackVariantReady(t, playlistId, trackId, playback_q, playGen);
+            if (playGen !== this._playGeneration) return;
+            if (!ready) return;
+            const row = await this.fetchTrackPayload(playlistId, trackId);
+            if (row) {
+                this.patchTrackInHub(row);
+                t = row;
+            }
+        }
+
+        const playSrc = prefs ? prefs.resolveExactPlaySrc(t, playback_q) : (t.play_src || preliminarySrc);
+        if (!playSrc) return;
+
         if (hub.pendingRestoreOnMeta) {
             hub.audio.removeEventListener('loadedmetadata', hub.pendingRestoreOnMeta);
             hub.pendingRestoreOnMeta = null;
@@ -391,27 +431,28 @@ export class PlaylistTransportController {
         hub.playingPlaylistId = playlistId;
         hub.playingTracks = [{
             id: trackId,
-            title: entry.title || '',
-            artist: entry.artist || '',
-            album: entry.album || '',
-            play_src: entry.play_src,
-            url: entry.url || '',
-            youtube_video_id: entry.youtube_video_id || '',
+            title: t.title || entry.title || '',
+            artist: t.artist || entry.artist || '',
+            album: t.album || entry.album || '',
+            play_src: playSrc,
+            play_variants: t.play_variants || entry.play_variants || {},
+            url: t.url || entry.url || '',
+            youtube_video_id: t.youtube_video_id || entry.youtube_video_id || '',
         }];
         hub.playingPlayable = hub.playingTracks.slice();
         hub.currentTrackId = trackId;
         hub.lastPlayedTrackSnapshot = {
             id: trackId,
-            title: entry.title || '',
-            artist: entry.artist || '',
-            album: entry.album != null ? String(entry.album) : '',
-            url: (entry.url || '').trim(),
-            youtube_video_id: (entry.youtube_video_id || '').trim(),
+            title: t.title || entry.title || '',
+            artist: t.artist || entry.artist || '',
+            album: (t.album != null ? String(t.album) : entry.album) || '',
+            url: (t.url || entry.url || '').trim(),
+            youtube_video_id: (t.youtube_video_id || entry.youtube_video_id || '').trim(),
             source_playlist_id: playlistId,
         };
-        hub.audio.src = entry.play_src;
-        hub.titleEl.textContent = entry.title || '—';
-        hub.subEl.textContent = entry.artist || '—';
+        hub.audio.src = playSrc;
+        hub.titleEl.textContent = t.title || entry.title || '—';
+        hub.subEl.textContent = t.artist || entry.artist || '—';
         if (this.lyrics) this.lyrics.loadCover(trackId, playlistId);
         this.updatePlayingRow();
         hub.audio.play().catch((err) => this.handlePlayError(err));
@@ -442,7 +483,7 @@ export class PlaylistTransportController {
             hub.audio.pause();
             return true;
         }
-        this.playLibraryEntry(next);
+        void this.playLibraryEntry(next);
         return true;
     }
 
@@ -1068,6 +1109,19 @@ export class PlaylistTransportController {
             const src = prefs ? prefs.resolvePlaySrc(t) : t.play_src;
             return !!src;
         });
+        if (Array.isArray(hub.libraryPool)) {
+            const tid = String(track_payload.id || '');
+            const idx = hub.libraryPool.findIndex((e) => String(e.track_id) === tid);
+            if (idx >= 0) {
+                hub.libraryPool[idx] = Object.assign({}, hub.libraryPool[idx], {
+                    play_src: track_payload.play_src,
+                    play_variants: track_payload.play_variants,
+                    title: track_payload.title,
+                    artist: track_payload.artist,
+                    album: track_payload.album,
+                });
+            }
+        }
     }
 
     async fetchTrackPayload(playlist_id, track_id) {

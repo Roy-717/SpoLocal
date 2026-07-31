@@ -14,6 +14,7 @@ export class PlaylistDownloadController {
         this.progressTimer = null;
         this.__dlJobsDomKey = '';
         this.__dlErrDomKey = '';
+        this._prevJobKeys = new Set();
         this.PROGRESS_MS_VISIBLE = 3000;
         this.PROGRESS_MS_HIDDEN = 12000;
         /** @type {import('../playlist/session.js').PlaylistSessionController|null} */
@@ -97,6 +98,18 @@ export class PlaylistDownloadController {
             }
 
             const entries = Object.entries(prog && typeof prog === 'object' ? prog : {});
+            const curKeys = new Set(entries.map(([k]) => k));
+            let job_completed = false;
+            if (this._prevJobKeys.size > 0) {
+                for (const k of this._prevJobKeys) {
+                    if (!curKeys.has(k)) {
+                        job_completed = true;
+                        break;
+                    }
+                }
+            }
+            this._prevJobKeys = curKeys;
+
             const jobDomKey = entries.length === 0 ? '__idle__' : JSON.stringify(entries.map(([k, v]) => [k, v && v.phase, v && v.percent, v && v.speed, v && v.eta, v && v.title, v && v.artist]));
             const errDomKey = errors.length === 0 ? '__noerr__' : JSON.stringify(errors.map(function (r) {
                 return [r.playlist_id, r.track_id, r.error || '', r.title || '', r.artist || ''];
@@ -285,6 +298,39 @@ export class PlaylistDownloadController {
                             hub.dlErrorList.appendChild(more);
                         }
                     }
+                }
+            }
+
+            if (job_completed && this.session) {
+                const hub = this.state.hub;
+                const pid = hub.playlistId;
+                if (pid && !hub.isHomeView) {
+                    try {
+                        const vr = await fetch('/api/playlist/view?playlist_id=' + encodeURIComponent(pid));
+                        if (vr.ok) {
+                            const viewData = await vr.json();
+                            if (typeof window.applySpaPlaylist === 'function') {
+                                window.applySpaPlaylist(viewData);
+                            } else {
+                                this.session.applySpaPlaylist(viewData);
+                            }
+                        }
+                        if (typeof window.refreshSidebarPlaylistList === 'function') {
+                            await window.refreshSidebarPlaylistList(pid);
+                        }
+                    } catch (refreshErr) {}
+                } else if (hub.isHomeView) {
+                    try {
+                        const hr = await fetch('/api/home/view');
+                        if (hr.ok) {
+                            const homeData = await hr.json();
+                            hub.libraryPool = homeData.library_pool || hub.libraryPool;
+                            if (this.session.home) this.session.home.render();
+                        }
+                    } catch (homeErr) {}
+                }
+                if (this.session.transport) {
+                    this.session.transport.onPlaybackQualityChanged();
                 }
             }
         } catch (e) {

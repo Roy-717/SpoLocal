@@ -16,13 +16,16 @@ export class PlaylistContextMenuController {
         this.editModal = null;
         /** @type {import('../player/transport_controller.js').PlaylistTransportController|null} */
         this.transport = null;
+        /** @type {import('./track_info_controller.js').TrackInfoController|null} */
+        this.trackInfo = null;
     }
 
     /** Set cross-controller references after all controllers are created. */
-    setCrossRefs(queue, editModal, transport) {
+    setCrossRefs(queue, editModal, transport, trackInfo) {
         this.queue = queue;
         this.editModal = editModal;
         this.transport = transport;
+        this.trackInfo = trackInfo;
     }
 
     /** Wire up context menu event listeners. */
@@ -204,6 +207,11 @@ export class PlaylistContextMenuController {
                     f.submit();
                 }, false);
             }
+            mkBtn('Song info', () => {
+                if (this.trackInfo) {
+                    this.trackInfo.open(String(payload.playlistId), String(payload.trackId));
+                }
+            }, false);
             mkBtn('Delete', () => {
                 if (!confirm('Remove this song from the playlist? The audio file on disk will be deleted if present.')) return;
                 const f = document.createElement('form');

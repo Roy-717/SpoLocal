@@ -139,28 +139,32 @@ class YtDlpAudioDownloader:
         self._youtube_dir = self._root / "downloads" / "youtube"
         self._youtube_dir.mkdir(parents=True, exist_ok=True)
 
-    def _ydl_opts(self, outtmpl: str) -> dict:
+    def _ydl_opts(self, outtmpl: str, quality: str | int = 192) -> dict:
+        from webapp.audio_quality import parse_quality_kbps, ytdlp_audio_postprocessor
+
+        kbps = parse_quality_kbps(quality)
         return {
             "format": "bestaudio/best",
             "ffmpeg_location": str(self._ffmpeg_bin),
             "outtmpl": {"default": outtmpl},
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }
-            ],
+            "postprocessors": [ytdlp_audio_postprocessor(kbps)],
         }
 
-    def download_urls(self, urls: list[str]) -> None:
+    def download_urls(self, urls: list[str], *, quality: str | int = 192) -> None:
+        from webapp.audio_quality import parse_quality_kbps, variant_key
+
+        kbps = parse_quality_kbps(quality)
         with yt_dlp.YoutubeDL(
-            self._ydl_opts(str(self._youtube_dir / "%(title)s [%(id)s].%(ext)s"))
+            self._ydl_opts(str(self._youtube_dir / "%(title)s [%(id)s].%(ext)s"), quality=kbps)
         ) as ydl:
             for url in urls:
                 ydl.download([url])
 
-    def download_from_line(self, line: str, progress_hook=None) -> tuple[str | None, Path | None]:
+    def download_from_line(self, line: str, progress_hook=None, *, quality: str | int = 192) -> tuple[str | None, Path | None]:
+        from webapp.audio_quality import parse_quality_kbps, variant_key
+
+        kbps = parse_quality_kbps(quality)
+        qk = variant_key(kbps)
         raw = line.strip()
         if not raw:
             return (None, None)
@@ -184,11 +188,11 @@ class YtDlpAudioDownloader:
         if playlist_folder:
             pl_dir = self._youtube_dir / playlist_folder
             pl_dir.mkdir(parents=True, exist_ok=True)
-            outtmpl = str(pl_dir / "%(title)s [%(id)s].%(ext)s")
+            outtmpl = str(pl_dir / f"%(title)s [%(id)s]__{qk}k.%(ext)s")
         else:
-            outtmpl = str(self._youtube_dir / "%(title)s [%(id)s].%(ext)s")
+            outtmpl = str(self._youtube_dir / f"%(title)s [%(id)s]__{qk}k.%(ext)s")
 
-        opts = self._ydl_opts(outtmpl)
+        opts = self._ydl_opts(outtmpl, quality=kbps)
         if progress_hook:
             opts["progress_hooks"] = [progress_hook]
         try:
@@ -329,16 +333,29 @@ class SpotifyEmbedDownloader:
         tid = extract_track_id(track_url)
         return self._api.get_track(tid)
 
-    def download_track(self, artist: str, title: str, out_dir: Path, cover_url: str | None = None, progress_hook=None) -> tuple[Path | None, str | None]:
+    def download_track(
+        self,
+        artist: str,
+        title: str,
+        out_dir: Path,
+        cover_url: str | None = None,
+        progress_hook=None,
+        *,
+        quality: str | int = 192,
+    ) -> tuple[Path | None, str | None]:
         """
         Search YouTube Music for '{artist} - {title}', download as mp3,
         write basic ID3 tags, return (Path | None, youtube_video_id | None).
         Falls back to regular YouTube search if YT Music fails.
         """
+        from webapp.audio_quality import parse_quality_kbps, quality_file_stem, ytdlp_audio_postprocessor
+
+        kbps = parse_quality_kbps(quality)
         out_dir.mkdir(parents=True, exist_ok=True)
         safe = sanitize_filename(f"{artist} - {title}", restricted=False)
-        outtmpl = str(out_dir / f"{safe}.%(ext)s")
-        expected = out_dir / f"{safe}.mp3"
+        stem = quality_file_stem(safe, kbps)
+        outtmpl = str(out_dir / f"{stem}.%(ext)s")
+        expected = out_dir / f"{stem}.mp3"
 
         for provider in ("ytsearch1", "ytmsearch1"):
             query = f"{provider}:{artist} - {title}"
@@ -346,13 +363,7 @@ class SpotifyEmbedDownloader:
                 "format": "bestaudio/best",
                 "ffmpeg_location": self._ffmpeg_exe,
                 "outtmpl": {"default": outtmpl},
-                "postprocessors": [
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
-                    }
-                ],
+                "postprocessors": [ytdlp_audio_postprocessor(kbps)],
                 "quiet": True,
                 "no_warnings": True,
                 "socket_timeout": 30,

@@ -44,7 +44,12 @@
                 </button>
             </form>
         </div>
-        <div class="shrink-0 flex items-center">
+        <div class="shrink-0 flex items-center gap-1">
+            <button type="button" id="open-settings"
+                    class="p-2 rounded-md text-[#B3B3B3] hover:text-white hover:bg-[#282828]"
+                    aria-label="Settings">
+                <i class="fa-solid fa-gear text-lg" aria-hidden="true"></i>
+            </button>
             <button type="button" id="mobile-open-dl"
                     class="p-2 rounded-md text-[#B3B3B3] hover:text-white hover:bg-[#282828]"
                     aria-label="Open downloads"
@@ -105,6 +110,56 @@
         <div id="atp-scroll" class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
             <div id="atp-list-inner" class="flex flex-col"></div>
         </div>
+        <div class="shrink-0 border-t border-[#404040] px-3 py-2 space-y-1">
+            <div class="flex items-center justify-between gap-2">
+                <span class="text-[10px] text-[#727272] uppercase tracking-wide">Download quality</span>
+                <span id="atp-download-kbps-value" class="text-[10px] text-[#B3B3B3] tabular-nums">192 kbps</span>
+            </div>
+            <input type="range" id="atp-download-kbps" min="32" max="192" step="8" value="192"
+                   class="w-full accent-[#1DB954] h-1">
+            <div class="flex justify-between text-[9px] text-[#727272]">
+                <span>32</span><span>High</span>
+            </div>
+        </div>
+    </div>
+    <div id="settings-modal"
+         class="isolate hidden fixed inset-0 z-[10050] flex items-center justify-center p-4"
+         role="dialog" aria-modal="true" aria-labelledby="settings-heading">
+        <div id="settings-modal-backdrop" class="absolute inset-0 bg-black/65"></div>
+        <div class="relative z-10 w-full max-w-md rounded-xl border border-[#3E3E3E] bg-[#282828] shadow-2xl p-5 text-left">
+            <div class="flex items-start justify-between gap-3 mb-4">
+                <h2 id="settings-heading" class="text-lg font-bold text-white">Settings</h2>
+                <button type="button" id="settings-close" class="text-[#727272] hover:text-white p-1 rounded-full hover:bg-[#3E3E3E]" aria-label="Close">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="space-y-5">
+                <div>
+                    <div class="flex items-center justify-between gap-2 mb-1">
+                        <h3 class="text-sm font-semibold text-white">Playback quality</h3>
+                        <span id="settings-playback-kbps-value" class="text-xs text-[#1DB954] tabular-nums">192 kbps</span>
+                    </div>
+                    <p class="text-xs text-[#727272] mb-3">MP3 bitrate to play. Missing files download automatically.</p>
+                    <input type="range" id="settings-playback-kbps" min="32" max="192" step="8" value="192"
+                           class="w-full accent-[#1DB954]">
+                    <div class="flex justify-between text-[10px] text-[#727272] mt-1">
+                        <span>32 kbps</span><span>High (192)</span>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex items-center justify-between gap-2 mb-1">
+                        <h3 class="text-sm font-semibold text-white">Default download quality</h3>
+                        <span id="settings-download-kbps-value" class="text-xs text-[#1DB954] tabular-nums">192 kbps</span>
+                    </div>
+                    <p class="text-xs text-[#727272] mb-3">Used when adding songs from search.</p>
+                    <input type="range" id="settings-download-kbps" min="32" max="192" step="8" value="192"
+                           class="w-full accent-[#1DB954]">
+                    <div class="flex justify-between text-[10px] text-[#727272] mt-1">
+                        <span>32 kbps</span><span>High (192)</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     <div id="playlist-edit-modal"
          class="isolate hidden fixed inset-0 z-[10050] flex items-center justify-center p-4"
@@ -146,6 +201,22 @@
         </div>
     </div>
 
+    <div id="track-info-modal"
+         class="isolate hidden fixed inset-0 z-[10050] flex items-center justify-center p-4"
+         role="dialog" aria-modal="true" aria-labelledby="track-info-heading">
+        <div id="track-info-modal-backdrop" class="absolute inset-0 bg-black/65"></div>
+        <div class="relative z-10 w-full max-w-md rounded-xl border border-[#3E3E3E] bg-[#282828] shadow-2xl p-5 text-left max-h-[85vh] overflow-y-auto">
+            <div class="flex items-start justify-between gap-3 mb-4">
+                <h2 id="track-info-heading" class="text-lg font-bold text-white">Song info</h2>
+                <button type="button" id="track-info-close" class="text-[#727272] hover:text-white p-1 rounded-full hover:bg-[#3E3E3E]" aria-label="Close">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <p id="track-info-error" class="hidden text-sm text-red-400 mb-3"></p>
+            <div id="track-info-body" class="space-y-4 text-sm"></div>
+        </div>
+    </div>
+
     <div id="context-menu"
          class="hidden fixed z-[9999] min-w-[11rem] rounded-md border border-[#404040] bg-[#282828] py-1 shadow-2xl text-sm text-white"
          role="menu"
@@ -184,9 +255,20 @@
                         class="w-full py-2 text-sm bg-white text-black rounded font-semibold">Create</button>
             </form>
 
-            <div class="mt-2 px-3 text-xs text-[#727272] font-medium tracking-wider">PLAYLISTS</div>
+            <div class="mt-2 px-3 text-xs text-[#727272] font-medium tracking-wider">BROWSE</div>
+            <div class="mt-1 px-1">
+                <a href="/"
+                   class="home-spa-nav flex w-full min-w-0 items-center gap-x-3 px-3 py-2 rounded-md text-sm {{ 'nav-active' if is_home|default(false) else 'hover:bg-[#282828]' }}">
+                    <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-[#282828] text-[#B3B3B3]">
+                        <i class="fa-solid fa-house"></i>
+                    </span>
+                    <span class="truncate">Home</span>
+                </a>
+            </div>
 
-            <div class="mt-1 flex-1 min-h-0 overflow-y-auto pr-1 space-y-0.5">
+            <div class="mt-3 px-3 text-xs text-[#727272] font-medium tracking-wider">PLAYLISTS</div>
+
+            <div id="sidebar-playlist-list" class="mt-1 flex-1 min-h-0 overflow-y-auto pr-1 space-y-0.5">
                 {% for row in playlist_nav %}
                 <div class="group playlist-card rounded-md text-sm {{ 'nav-active' if row.active else '' }}"
                      data-playlist-id="{{ row.id }}"
@@ -206,18 +288,20 @@
 
         <!-- Main content -->
         <div class="flex-1 flex flex-col overflow-hidden min-w-0">
-            {% if current %}
             <div id="spa-main" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {% if is_home|default(false) %}
+                {% include "partials/home_main.html" %}
+                {% elif current %}
                 {% include "partials/playlist_main.html" %}
-            </div>
-            {% else %}
-            <div class="flex-1 flex items-center justify-center text-[#727272]">
-                <div class="text-center">
-                    <i class="fa-solid fa-music text-6xl mb-4"></i>
-                    <p class="text-xl">Create or import a playlist to get started.</p>
+                {% else %}
+                <div class="flex-1 flex items-center justify-center text-[#727272]">
+                    <div class="text-center">
+                        <i class="fa-solid fa-music text-6xl mb-4"></i>
+                        <p class="text-xl">Create or import a playlist to get started.</p>
+                    </div>
                 </div>
+                {% endif %}
             </div>
-            {% endif %}
         </div>
 
         <!-- Download queue sidebar -->
@@ -255,7 +339,6 @@
         </aside>
     </div>
 
-    {% if current %}
     <audio id="player-audio" preload="auto" playsinline style="position:absolute;width:0;height:0;opacity:0;pointer-events:none;"></audio>
 
     <div id="lyrics-panel"
@@ -412,9 +495,9 @@
     </div>
 
     <script type="application/json" id="playlist-json">{{ current_tracks_payload | default([], true) | tojson | safe }}</script>
-    <script type="application/json" id="spolocal-player-boot">{{ {"playlistId": current.id} | tojson | safe }}</script>
+    <script type="application/json" id="spolocal-player-boot">{{ {"playlistId": current.id if current else none, "isHome": is_home|default(false), "libraryPool": home_library_pool|default([], true), "catalog": playlist_catalog|default([], true)} | tojson | safe }}</script>
+    <script src="/static/js/audio_quality_prefs.js"></script>
     <script type="module" src="/static/js/PlaylistSession.mjs"></script>
-    {% endif %}
     <script type="module" src="/static/pwa/pwa-entry.js"></script>
     <script src="/static/js/spolocal_chrome.js" defer></script>
 </body>

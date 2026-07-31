@@ -12,6 +12,11 @@ services:
       - ./webapp/static:/app/webapp/static
       - ./webapp/templates:/app/webapp/templates
       - ./webapp/main.py:/app/webapp/main.py
+      - ./webapp/download_service.py:/app/webapp/download_service.py
+      - ./webapp/tag_metadata.py:/app/webapp/tag_metadata.py
+      - ./webapp/models.py:/app/webapp/models.py
+      - ./webapp/audio_quality.py:/app/webapp/audio_quality.py
+      - ./spotify_scraper.py:/app/spotify_scraper.py
     # Optional: copy webapp/.env.example → webapp/.env, then add:
     #   - ./webapp/.env:/app/webapp/.env:ro
     restart: unless-stopped

@@ -7,9 +7,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 from urllib.parse import quote
 from uuid import uuid4
+
+from audio_quality import kbps_from_relpath
 
 
 class DownloadStatus(str, Enum):
@@ -43,6 +45,7 @@ class Track:
     error: Optional[str] = None
     added_at: datetime = field(default_factory=datetime.utcnow)
     media_relpath: Optional[str] = None
+    media_variants: Dict[str, str] = field(default_factory=dict)
     cover_url: Optional[str] = None
     youtube_video_id: Optional[str] = None
     album: Optional[str] = None
@@ -54,12 +57,50 @@ class Track:
     def create(cls, title: str, artist: str, url: Optional[str] = None) -> "Track":
         return cls(id=str(uuid4()), title=title, artist=artist, url=url)
 
-    def play_src(self) -> Optional[str]:
-        if self.status != DownloadStatus.done:
+    def _media_rel_for_quality(self, quality: Optional[str] = None) -> Optional[str]:
+        variants = self.media_variants or {}
+        if quality:
+            rel = variants.get(str(quality))
+            if rel:
+                return rel
+            legacy = {"low": "64", "high": "192"}
+            if quality in legacy and legacy[quality] in variants:
+                return variants[legacy[quality]]
+        for key in sorted(variants.keys(), key=lambda k: int(k) if str(k).isdigit() else 0, reverse=True):
+            if variants.get(key):
+                return variants[key]
+        return self.media_relpath
+
+    def play_src(self, quality: Optional[str] = None) -> Optional[str]:
+        rel = self._media_rel_for_quality(quality)
+        if not rel:
             return None
-        if not self.media_relpath:
+        if self.status != DownloadStatus.done and not (self.media_variants or self.media_relpath):
             return None
-        return "/media/" + quote(self.media_relpath, safe="/")
+        return "/media/" + quote(rel, safe="/")
+
+    def play_variants(self) -> Dict[str, str]:
+        out: Dict[str, str] = {}
+        for key, rel in (self.media_variants or {}).items():
+            if rel:
+                out[key] = "/media/" + quote(rel, safe="/")
+        if self.media_relpath and not out:
+            inferred = kbps_from_relpath(self.media_relpath)
+            key = str(inferred) if inferred else "192"
+            out[key] = "/media/" + quote(self.media_relpath, safe="/")
+        return out
+
+    def set_media_variant(self, quality: str, relpath: Optional[str]) -> None:
+        if not quality or not relpath:
+            return
+        if self.media_variants is None:
+            self.media_variants = {}
+        self.media_variants[str(quality)] = relpath
+        if str(quality) == "192" or not self.media_relpath:
+            self.media_relpath = relpath
+
+    def has_media_variant(self, quality: str) -> bool:
+        return bool((self.media_variants or {}).get(str(quality)) or (str(quality) == "192" and self.media_relpath))
 
 
 @dataclass(slots=True)

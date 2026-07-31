@@ -5,6 +5,7 @@ Provides normalized values for track enrichment and serving."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -305,3 +306,33 @@ def _extract_lyrics_raw(path: Path) -> Optional[str]:
     except Exception:
         return None
     return None
+
+
+def read_audio_file_stats(path: Path) -> dict[str, Any]:
+    """Return size, mtime, duration, bitrate, and format for a local audio file."""
+    st = path.stat()
+    downloaded_at = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat()
+    duration_sec: Optional[float] = None
+    bitrate_kbps: Optional[int] = None
+    fmt = path.suffix.lstrip(".").lower() or None
+    try:
+        from mutagen import File as MutagenFile
+
+        audio = MutagenFile(path)
+        if audio is not None and audio.info is not None:
+            info = audio.info
+            length = getattr(info, "length", None)
+            if length is not None:
+                duration_sec = round(float(length), 2)
+            bitrate = getattr(info, "bitrate", None)
+            if bitrate is not None:
+                bitrate_kbps = int(round(float(bitrate) / 1000))
+    except Exception:
+        pass
+    return {
+        "size_bytes": st.st_size,
+        "downloaded_at": downloaded_at,
+        "duration_sec": duration_sec,
+        "bitrate_kbps": bitrate_kbps,
+        "format": fmt,
+    }

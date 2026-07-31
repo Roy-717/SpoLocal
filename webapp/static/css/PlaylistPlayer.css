@@ -39,6 +39,28 @@ body { background: #121212; color: #fff; }
 .track-row:has(.track-index-slot .track-play--row:focus-visible) .track-index-slot .track-row-index {
     opacity: 0;
 }
+.track-row-like {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease, color 0.12s ease;
+}
+.track-row-like--on,
+.track-row-like--on:hover {
+    opacity: 1;
+    pointer-events: auto;
+    color: #1DB954;
+}
+@media (hover: hover) and (pointer: fine) {
+    .track-row:hover .track-row-like,
+    .home-song-row:hover .track-row-like {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+.track-row-like:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
 .search-input {
     background: #242424;
     border: 1px solid #3E3E3E;

@@ -1,10 +1,8 @@
 /**
  * Controller owning all transport concerns for the playlist page.
- * Responsibilities:
- * - Handle play/pause, prev/next, seek, and volume changes
- * - Manage shuffle and repeat modes and their persistence
- * - Sync UI state (buttons, sliders) with the audio element
  */
+import { PlaylistHomeViewController } from '../playlist/home_view_controller.js';
+
 export class PlaylistTransportController {
     /** @param {import('./player_state.js').PlaylistPlayerState} state */
     constructor(state) {
@@ -14,14 +12,17 @@ export class PlaylistTransportController {
         this.queue = null;
         /** @type {import('./lyrics_controller.js').PlaylistLyricsController|null} */
         this.lyrics = null;
+        /** @type {import('../playlist/home_view_controller.js').PlaylistHomeViewController|null} */
+        this.home = null;
         /** @type {ReturnType<typeof setTimeout>|null} */
         this.stallRecoveryTimer = null;
     }
 
     /** Set cross-controller references after all controllers are created. */
-    setCrossRefs(queue, lyrics) {
+    setCrossRefs(queue, lyrics, home) {
         this.queue = queue;
         this.lyrics = lyrics;
+        this.home = home;
     }
 
     /** Wire up transport-related event listeners and load preferences. */
@@ -174,6 +175,22 @@ export class PlaylistTransportController {
 
         // Global row clicks
         document.body.addEventListener('click', (e) => {
+            const homeRow = e.target.closest('.home-song-row');
+            if (homeRow && !e.target.closest('.track-row-like')) {
+                const tid = homeRow.getAttribute('data-track-id');
+                const pid = homeRow.getAttribute('data-playlist-id');
+                const src = homeRow.getAttribute('data-play-src');
+                if (tid && pid && src) {
+                    this.playLibraryEntry({
+                        playlist_id: pid,
+                        track_id: tid,
+                        play_src: src,
+                        title: homeRow.getAttribute('data-title') || '',
+                        artist: homeRow.getAttribute('data-artist') || '',
+                    });
+                }
+                return;
+            }
             const playBtn = e.target.closest('.track-play');
             if (playBtn && !playBtn.disabled) {
                 const row = playBtn.closest('tr.track-row');
@@ -271,6 +288,162 @@ export class PlaylistTransportController {
         if (!tid || !pid) return false;
         if (hub.LIKED_PLAYLIST_ID && pid === hub.LIKED_PLAYLIST_ID) return true;
         return hub.likedKeysSet.has(this.liked_entry_key(pid, tid));
+    }
+
+    is_track_liked(playlist_id, track_id) {
+        const hub = this.state.hub;
+        const pid = String(playlist_id || '').trim();
+        const tid = String(track_id || '').trim();
+        if (!tid || !pid) return false;
+        if (hub.LIKED_PLAYLIST_ID && pid === hub.LIKED_PLAYLIST_ID) return true;
+        return hub.likedKeysSet.has(this.liked_entry_key(pid, tid));
+    }
+
+    update_track_row_like_buttons() {
+        document.querySelectorAll('.track-row-like').forEach((btn) => {
+            const pid = btn.getAttribute('data-playlist-id') || btn.dataset.playlistId || '';
+            const tid = btn.getAttribute('data-track-id') || btn.dataset.trackId || '';
+            const on = this.is_track_liked(pid, tid);
+            const icon = btn.querySelector('i');
+            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+            btn.classList.toggle('track-row-like--on', on);
+            if (icon) {
+                icon.classList.toggle('fa-solid', on);
+                icon.classList.toggle('fa-regular', !on);
+            }
+        });
+    }
+
+    bind_track_row_like_buttons() {
+        document.querySelectorAll('.track-row-like').forEach((btn) => {
+            if (btn.dataset.likeBound) return;
+            btn.dataset.likeBound = '1';
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const pid = btn.getAttribute('data-playlist-id') || btn.dataset.playlistId || '';
+                const tid = btn.getAttribute('data-track-id') || btn.dataset.trackId || '';
+                if (!pid || !tid) return;
+                const want = !this.is_track_liked(pid, tid);
+                try {
+                    const r = await fetch('/api/track/like', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            source_playlist_id: pid,
+                            source_track_id: tid,
+                            liked: want,
+                        }),
+                    });
+                    if (!r.ok) return;
+                    await this.refresh_liked_keys_from_server();
+                    this.update_like_button_ui();
+                    this.update_track_row_like_buttons();
+                } catch (err) {}
+            });
+        });
+        this.update_track_row_like_buttons();
+    }
+
+    library_pool_playable() {
+        const hub = this.state.hub;
+        return (Array.isArray(hub.libraryPool) ? hub.libraryPool : []).filter((t) => t && t.play_src);
+    }
+
+    pick_random_library_entry(exclude_track_id) {
+        const pool = this.library_pool_playable();
+        if (!pool.length) return null;
+        if (pool.length === 1) return pool[0];
+        let tries = 0;
+        while (tries < 8) {
+            const pick = pool[Math.floor(Math.random() * pool.length)];
+            if (!exclude_track_id || String(pick.track_id) !== String(exclude_track_id)) return pick;
+            tries++;
+        }
+        return pool[Math.floor(Math.random() * pool.length)];
+    }
+
+    play_random_from_library() {
+        const entry = this.pick_random_library_entry(null);
+        if (entry) this.playLibraryEntry(entry);
+    }
+
+    playLibraryEntry(entry) {
+        const hub = this.state.hub;
+        if (!hub.audio || !entry || !entry.play_src) return;
+        const trackId = String(entry.track_id || '');
+        const playlistId = String(entry.playlist_id || '');
+        if (!trackId || !playlistId) return;
+
+        if (hub.currentTrackId === trackId && hub.playingPlaylistId === playlistId && hub.audio.src) {
+            if (hub.audio.paused) hub.audio.play().catch((err) => this.handlePlayError(err));
+            else hub.audio.pause();
+            this.update_like_button_ui();
+            return;
+        }
+
+        if (hub.pendingRestoreOnMeta) {
+            hub.audio.removeEventListener('loadedmetadata', hub.pendingRestoreOnMeta);
+            hub.pendingRestoreOnMeta = null;
+        }
+
+        hub.playingPlaylistId = playlistId;
+        hub.playingTracks = [{
+            id: trackId,
+            title: entry.title || '',
+            artist: entry.artist || '',
+            album: entry.album || '',
+            play_src: entry.play_src,
+            url: entry.url || '',
+            youtube_video_id: entry.youtube_video_id || '',
+        }];
+        hub.playingPlayable = hub.playingTracks.slice();
+        hub.currentTrackId = trackId;
+        hub.lastPlayedTrackSnapshot = {
+            id: trackId,
+            title: entry.title || '',
+            artist: entry.artist || '',
+            album: entry.album != null ? String(entry.album) : '',
+            url: (entry.url || '').trim(),
+            youtube_video_id: (entry.youtube_video_id || '').trim(),
+            source_playlist_id: playlistId,
+        };
+        hub.audio.src = entry.play_src;
+        hub.titleEl.textContent = entry.title || '—';
+        hub.subEl.textContent = entry.artist || '—';
+        if (this.lyrics) this.lyrics.loadCover(trackId, playlistId);
+        this.updatePlayingRow();
+        hub.audio.play().catch((err) => this.handlePlayError(err));
+        if (hub.lyricsVisible && this.lyrics) this.lyrics.fetchLyrics(true);
+        this.updateMediaSessionMetadata(hub.playingTracks[0], playlistId);
+        PlaylistHomeViewController.record_track_play(playlistId, trackId);
+        this.update_like_button_ui();
+        if (hub.queueVisible && this.queue) this.queue.render_queue_list();
+        if (hub.isHomeView && this.home) this.home.render();
+    }
+
+    playAtDeltaRandomMode(delta) {
+        const hub = this.state.hub;
+        if (hub.repeatMode === 'one' && delta > 0 && hub.currentTrackId) {
+            hub.audio.currentTime = 0;
+            hub.audio.play().catch((err) => this.handlePlayError(err));
+            return true;
+        }
+        if (delta <= 0) {
+            if (hub.currentTrackId) {
+                hub.audio.currentTime = 0;
+                hub.audio.play().catch((err) => this.handlePlayError(err));
+            }
+            return true;
+        }
+        const next = this.pick_random_library_entry(hub.repeatMode === 'off' ? hub.currentTrackId : null);
+        if (!next) {
+            hub.audio.pause();
+            return true;
+        }
+        this.playLibraryEntry(next);
+        return true;
     }
 
     update_like_button_ui() {
@@ -484,6 +657,10 @@ export class PlaylistTransportController {
     toggle_main_play() {
         const hub = this.state.hub;
         if (!hub.audio.src) {
+            if (hub.randomMode && this.library_pool_playable().length) {
+                this.play_random_from_library();
+                return;
+            }
             if (hub.playable.length) {
                 this.playTrackById(hub.playable[0].id);
             }
@@ -499,6 +676,9 @@ export class PlaylistTransportController {
     playAtDelta(delta) {
         const hub = this.state.hub;
         try { console.debug('[Playlist] playAtDelta', { delta: delta, current: hub.currentTrackId }); } catch (e) {}
+        if (hub.randomMode && this.library_pool_playable().length) {
+            if (this.playAtDeltaRandomMode(delta)) return;
+        }
         if (hub.repeatMode === 'one' && delta > 0 && hub.currentTrackId) {
             hub.audio.currentTime = 0;
             hub.audio.play().catch(err => this.handlePlayError(err));
@@ -843,7 +1023,138 @@ export class PlaylistTransportController {
         }
     }
 
-    playTrackById(trackId) {
+    async request_quality_download(playlist_id, track_id, quality) {
+        const pid = String(playlist_id || '').trim();
+        const tid = String(track_id || '').trim();
+        const q = quality || (window.SpolocalQualityPrefs ? String(window.SpolocalQualityPrefs.playbackKbps()) : '192');
+        if (!pid || !tid) return false;
+        try {
+            const fd = new FormData();
+            fd.append('quality', q);
+            const resp = await fetch('/playlists/' + encodeURIComponent(pid) + '/tracks/' + encodeURIComponent(tid) + '/download', {
+                method: 'POST',
+                body: fd,
+                credentials: 'same-origin',
+                redirect: 'manual',
+            });
+            return resp.ok || resp.status === 303;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    findTrackInHub(track_id) {
+        const hub = this.state.hub;
+        const tid = String(track_id || '');
+        let t = hub.tracks && hub.tracks.find((x) => x.id === tid);
+        if (!t && hub.playingTracks) {
+            t = hub.playingTracks.find((x) => x.id === tid);
+        }
+        return t || null;
+    }
+
+    patchTrackInHub(track_payload) {
+        if (!track_payload || !track_payload.id) return;
+        const hub = this.state.hub;
+        const patch = (list) => {
+            if (!Array.isArray(list)) return;
+            const idx = list.findIndex((x) => x.id === track_payload.id);
+            if (idx >= 0) list[idx] = Object.assign({}, list[idx], track_payload);
+        };
+        patch(hub.tracks);
+        patch(hub.playingTracks);
+        const prefs = window.SpolocalQualityPrefs;
+        hub.playable = (hub.tracks || []).filter((t) => {
+            const src = prefs ? prefs.resolvePlaySrc(t) : t.play_src;
+            return !!src;
+        });
+    }
+
+    async fetchTrackPayload(playlist_id, track_id) {
+        const pid = String(playlist_id || '').trim();
+        const tid = String(track_id || '').trim();
+        if (!pid || !tid) return null;
+        try {
+            const resp = await fetch('/api/playlist/state?playlist_id=' + encodeURIComponent(pid), {
+                headers: { Accept: 'application/json' },
+            });
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            const rows = Array.isArray(data.tracks_payload) ? data.tracks_payload : [];
+            return rows.find((x) => x.id === tid) || null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async waitForPlaybackVariant(playlist_id, track_id, kbps, play_gen) {
+        const prefs = window.SpolocalQualityPrefs;
+        const q = prefs ? String(prefs.clampKbps(kbps)) : String(kbps);
+        const deadline = Date.now() + 300000;
+        let saw_job = false;
+        while (Date.now() < deadline) {
+            if (play_gen != null && play_gen !== this._playGeneration) return false;
+            const row = await this.fetchTrackPayload(playlist_id, track_id);
+            if (row && prefs && prefs.hasVariant(row, q)) {
+                this.patchTrackInHub(row);
+                return true;
+            }
+            try {
+                const prog = await fetch('/api/progress').then((r) => r.json());
+                const jobs = prog && prog.jobs ? prog.jobs : {};
+                if (jobs[track_id]) saw_job = true;
+                else if (saw_job) {
+                    const row2 = await this.fetchTrackPayload(playlist_id, track_id);
+                    if (row2 && prefs && prefs.hasVariant(row2, q)) {
+                        this.patchTrackInHub(row2);
+                        return true;
+                    }
+                    return false;
+                }
+            } catch (e) {}
+            await new Promise((resolve) => setTimeout(resolve, 750));
+        }
+        return false;
+    }
+
+    async ensurePlaybackVariantReady(track, playlist_id, track_id, playback_q, play_gen) {
+        const prefs = window.SpolocalQualityPrefs;
+        if (!prefs || prefs.hasVariant(track, playback_q)) return true;
+        const pid = String(playlist_id || '').trim();
+        if (!pid) return false;
+        const hub = this.state.hub;
+        const artist_label = track.artist || '';
+        if (hub.subEl) {
+            hub.subEl.textContent = 'Downloading ' + prefs.formatLabel(playback_q) + '…';
+        }
+        this.setPlayUi(false);
+        if (hub.audio && !hub.audio.paused) hub.audio.pause();
+        await this.request_quality_download(pid, track_id, playback_q);
+        if (play_gen != null && play_gen !== this._playGeneration) return false;
+        const ok = await this.waitForPlaybackVariant(pid, track_id, playback_q, play_gen);
+        if (play_gen != null && play_gen !== this._playGeneration) return false;
+        if (!ok && hub.subEl) hub.subEl.textContent = artist_label;
+        return ok;
+    }
+
+    async onPlaybackQualityChanged() {
+        const hub = this.state.hub;
+        if (!hub.currentTrackId) return;
+        const prefs = window.SpolocalQualityPrefs;
+        const playback_q = prefs ? String(prefs.playbackKbps()) : '192';
+        let t = this.findTrackInHub(hub.currentTrackId);
+        const pid = hub.playingPlaylistId || hub.playlistId;
+        if (prefs && t && !prefs.hasVariant(t, playback_q) && pid) {
+            const ok = await this.ensurePlaybackVariantReady(t, pid, hub.currentTrackId, playback_q, this._playGeneration);
+            if (!ok) return;
+            t = this.findTrackInHub(hub.currentTrackId) || t;
+        }
+        const src = prefs ? prefs.resolveExactPlaySrc(t, playback_q) : '';
+        if (!src) return;
+        this.trySoftReloadCurrentAudioSource();
+    }
+
+    async playTrackById(trackId) {
         const hub = this.state.hub;
         if (!hub.audio) return;
         if (hub.currentTrackId === trackId && hub.audio.src) {
@@ -862,12 +1173,11 @@ export class PlaylistTransportController {
         if (!t && hub.playingTracks) {
             t = hub.playingTracks.find(x => x.id === trackId);
         }
-        if (!t || !t.play_src) return;
-
-        if (hub.pendingRestoreOnMeta) {
-            hub.audio.removeEventListener('loadedmetadata', hub.pendingRestoreOnMeta);
-            hub.pendingRestoreOnMeta = null;
-        }
+        if (!t) return;
+        this._playGeneration = (this._playGeneration || 0) + 1;
+        const playGen = this._playGeneration;
+        const prefs = window.SpolocalQualityPrefs;
+        const playback_q = prefs ? String(prefs.playbackKbps()) : '192';
 
         if (fromViewed) {
             const playingPidChanged = String(hub.playingPlaylistId || '') !== String(hub.playlistId || '');
@@ -879,7 +1189,27 @@ export class PlaylistTransportController {
             }
         }
         const sourcePid = fromViewed ? hub.playlistId : (hub.playingPlaylistId || hub.playlistId);
+        const sourcePidFinal = sourcePid;
         hub.currentTrackId = trackId;
+        hub.titleEl.textContent = t.title;
+        hub.subEl.textContent = t.artist || '';
+        this.updatePlayingRow();
+
+        if (prefs && !prefs.hasVariant(t, playback_q) && sourcePid) {
+            const ready = await this.ensurePlaybackVariantReady(t, sourcePid, trackId, playback_q, playGen);
+            if (playGen !== this._playGeneration) return;
+            if (!ready) return;
+            t = this.findTrackInHub(trackId) || t;
+        }
+
+        const playSrc = prefs ? prefs.resolveExactPlaySrc(t, playback_q) : (t.play_src || '');
+        if (!playSrc) return;
+
+        if (hub.pendingRestoreOnMeta) {
+            hub.audio.removeEventListener('loadedmetadata', hub.pendingRestoreOnMeta);
+            hub.pendingRestoreOnMeta = null;
+        }
+
         hub.lastPlayedTrackSnapshot = {
             id: trackId,
             title: t.title || '',
@@ -887,9 +1217,9 @@ export class PlaylistTransportController {
             album: t.album != null ? String(t.album) : '',
             url: (t.url || '').trim(),
             youtube_video_id: (t.youtube_video_id || '').trim(),
-            source_playlist_id: sourcePid,
+            source_playlist_id: sourcePidFinal,
         };
-        hub.audio.src = t.play_src;
+        hub.audio.src = playSrc;
         hub.titleEl.textContent = t.title;
         hub.subEl.textContent = t.artist;
         if (this.lyrics) this.lyrics.loadCover(trackId);
@@ -901,6 +1231,7 @@ export class PlaylistTransportController {
         }
         if (hub.lyricsVisible && this.lyrics) this.lyrics.fetchLyrics(true);
         this.updateMediaSessionMetadata(t);
+        PlaylistHomeViewController.record_track_play(sourcePidFinal, trackId);
         this.update_like_button_ui();
         if (hub.queueVisible && this.queue) this.queue.render_queue_list();
     }
@@ -912,7 +1243,11 @@ export class PlaylistTransportController {
         if (!t && hub.playingTracks) {
             t = hub.playingTracks.find((x) => x.id === hub.currentTrackId);
         }
-        return t && t.play_src ? String(t.play_src).trim() : '';
+        const prefs = window.SpolocalQualityPrefs;
+        const q = prefs ? prefs.playbackKbps() : 192;
+        const exact = prefs ? prefs.resolveExactPlaySrc(t, q) : '';
+        if (exact) return exact;
+        return prefs ? prefs.resolvePlaySrc(t) : (t && t.play_src ? String(t.play_src).trim() : '');
     }
 
     trySoftReloadCurrentAudioSource() {

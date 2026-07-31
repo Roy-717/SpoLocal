@@ -300,14 +300,21 @@ _COVER_THUMB_MAX_SIDE = DEFAULT_THUMB_MAX_SIDE
 _COVER_JPEG_QUALITY = DEFAULT_JPEG_QUALITY
 
 
-def _track_payload_row(t: Track) -> dict[str, Any]:
+def _track_payload_row(t: Track, *, playback_quality: Optional[str] = None) -> dict[str, Any]:
     st = t.status.value if hasattr(t.status, "value") else str(t.status)
+    variants = t.play_variants()
+    preferred = playback_quality or "192"
+    play_src = variants.get(preferred) or variants.get("192") or t.play_src()
+    if not play_src and variants:
+        best_key = sorted(variants.keys(), key=lambda k: int(k) if str(k).isdigit() else 0, reverse=True)[0]
+        play_src = variants.get(best_key)
     return {
         "id": t.id,
         "title": t.title,
         "artist": t.artist,
         "album": t.album or "",
-        "play_src": t.play_src(),
+        "play_src": play_src,
+        "play_variants": variants,
         "status": st,
         "url": t.url or "",
         "youtube_video_id": t.youtube_video_id or "",
@@ -337,25 +344,71 @@ def _cover_tiles_for_playlist(pl: Playlist) -> list[str]:
     return [f"/playlists/{pl.id}/tracks/{t.id}/cover" for t in pl.tracks[:4]]
 
 
+def _library_pool_payload() -> list[dict[str, Any]]:
+    pool: list[dict[str, Any]] = []
+    for pl in service.list_playlists():
+        for t in pl.tracks:
+            variants = t.play_variants()
+            src = variants.get("192") or t.play_src()
+            if not src and variants:
+                best_key = sorted(variants.keys(), key=lambda k: int(k) if str(k).isdigit() else 0, reverse=True)[0]
+                src = variants.get(best_key)
+            if not src:
+                continue
+            pool.append(
+                {
+                    "playlist_id": pl.id,
+                    "track_id": t.id,
+                    "title": t.title,
+                    "artist": t.artist,
+                    "album": t.album or "",
+                    "play_src": src,
+                    "play_variants": variants,
+                    "url": t.url or "",
+                    "youtube_video_id": t.youtube_video_id or "",
+                }
+            )
+    return pool
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, playlist_id: Optional[str] = None):
     pid = playlist_id.strip() if playlist_id else None
     playlists = service.list_playlists()
-    current = service.get_playlist(pid) if pid else (playlists[0] if playlists else None)
+    is_home = not pid
+    current: Optional[Playlist] = None
     current_tracks_payload: list[dict[str, Any]] = []
-    if current:
-        await asyncio.to_thread(service.hydrate_media_paths, current, fill_albums=False, persist=False)
-        current_tracks_payload = [_track_payload_row(t) for t in current.tracks]
-    playlist_nav = service.list_playlist_nav(current.id if current else None)
-    current_cover_tiles = _cover_tiles_for_playlist(current) if current else []
+    current_cover_tiles: list[str] = []
+    home_library_pool: list[dict[str, Any]] = []
+
+    if pid:
+        current = service.get_playlist(pid)
+        if not current:
+            is_home = True
+        else:
+            await asyncio.to_thread(service.hydrate_media_paths, current, fill_albums=False, persist=False)
+            current_tracks_payload = [_track_payload_row(t) for t in current.tracks]
+            current_cover_tiles = _cover_tiles_for_playlist(current)
+
+    if is_home:
+        for pl in playlists:
+            await asyncio.to_thread(service.hydrate_media_paths, pl, fill_albums=False, persist=False)
+        home_library_pool = _library_pool_payload()
+
+    nav_current = None if is_home else (current.id if current else None)
+    playlist_nav = service.list_playlist_nav(nav_current)
+    playlist_catalog = service.list_playlist_catalog()
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "playlist_nav": playlist_nav,
+            "playlist_catalog": playlist_catalog,
             "current": current,
+            "is_home": is_home,
             "current_cover_tiles": current_cover_tiles,
             "current_tracks_payload": current_tracks_payload,
+            "home_library_pool": home_library_pool,
             "service": service,
             "liked_playlist_id": DownloadService.LIKED_SONGS_PLAYLIST_ID,
         },
@@ -370,6 +423,10 @@ async def api_playlists_catalog():
 @app.get("/api/liked-keys")
 async def api_liked_keys():
     return JSONResponse({"keys": service.list_liked_entry_keys()})
+
+
+class CreatePlaylistBody(BaseModel):
+    name: str = Field(..., min_length=1)
 
 
 class TrackLikeBody(BaseModel):
@@ -389,6 +446,14 @@ async def api_track_like(body: TrackLikeBody):
     return JSONResponse({"ok": True, "liked": body.liked})
 
 
+@app.get("/api/playlists/{playlist_id}/tracks/{track_id}/info")
+async def api_track_info(playlist_id: str, track_id: str):
+    info = service.get_track_info(playlist_id, track_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="Track not found")
+    return JSONResponse(info)
+
+
 @app.get("/api/playlist/state")
 async def api_playlist_state(playlist_id: str):
     pl = service.get_playlist(playlist_id.strip())
@@ -399,6 +464,44 @@ async def api_playlist_state(playlist_id: str):
             "playlist_id": pl.id,
             "tracks_payload": [_track_payload_row(t) for t in pl.tracks],
         },
+    )
+
+
+@app.get("/api/home/view")
+async def api_home_view(request: Request):
+    """HTML fragment for in-page home switching."""
+    for pl in service.list_playlists():
+        await asyncio.to_thread(service.hydrate_media_paths, pl, fill_albums=False, persist=False)
+    tpl = templates.env.get_template("partials/home_main.html")
+    html = tpl.render(request=request)
+    return JSONResponse(
+        {
+            "html": html,
+            "view": "home",
+            "library_pool": _library_pool_payload(),
+            "catalog": service.list_playlist_catalog(),
+        }
+    )
+
+
+@app.post("/api/playlists")
+async def api_create_playlist(body: CreatePlaylistBody):
+    try:
+        pl = service.create_playlist(body.name.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    tiles = [f"/playlists/{pl.id}/tracks/{t.id}/cover" for t in pl.tracks[:4]]
+    return JSONResponse(
+        {
+            "ok": True,
+            "playlist": {
+                "id": pl.id,
+                "name": pl.name,
+                "bio": pl.bio or "",
+                "cover_tiles": tiles,
+                "system_locked": False,
+            },
+        }
     )
 
 
@@ -549,11 +652,14 @@ async def api_preview(vid: str):
 
 
 @app.post("/playlists")
-async def create_playlist(name: str = Form(...)):
+async def create_playlist(request: Request, name: str = Form(...)):
+    wants_json = "application/json" in (request.headers.get("accept") or "").lower()
     try:
-        service.create_playlist(name)
+        pl = service.create_playlist(name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if wants_json:
+        return JSONResponse({"ok": True, "playlist_id": pl.id, "name": pl.name})
     return RedirectResponse("/", status_code=303)
 
 
@@ -568,26 +674,44 @@ async def import_spotify(spotify_url: str = Form(...)):
 
 @app.post("/playlists/{playlist_id}/tracks")
 async def add_track(
+    request: Request,
     playlist_id: str,
     title: str = Form(...),
     artist: str = Form(...),
     url: Optional[str] = Form(None),
     album: Optional[str] = Form(None),
     skip_download: Optional[str] = Form(None),
+    quality: Optional[str] = Form(None),
 ):
     pid = playlist_id.strip()
     raw = (skip_download or "").strip().lower()
     skip = raw in ("1", "true", "yes", "on")
     u = (url or "").strip() or None
     alb = (album or "").strip() or None
+    dl_quality = (quality or "192").strip() or "192"
+    wants_json = "application/json" in (request.headers.get("accept") or "").lower()
     try:
-        service.add_track_to_playlist(
-            pid, title.strip(), artist.strip(), url=u, album=alb, enqueue_download=not skip
+        track = service.add_track_to_playlist(
+            pid,
+            title.strip(),
+            artist.strip(),
+            url=u,
+            album=alb,
+            enqueue_download=not skip,
+            download_quality=dl_quality,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Playlist not found")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if wants_json:
+        return JSONResponse(
+            {
+                "ok": True,
+                "playlist_id": pid,
+                "track": _track_payload_row(track),
+            }
+        )
     return RedirectResponse(f"/?playlist_id={pid}", status_code=303)
 
 
@@ -596,11 +720,13 @@ async def start_download(
     playlist_id: str,
     track_id: str,
     redownload: Optional[str] = Form(None),
+    quality: Optional[str] = Form(None),
 ):
     pid = playlist_id.strip()
     tid = track_id.strip()
     force = (redownload or "").strip().lower() in ("1", "true", "yes", "on")
-    if not service.start_track_download(pid, tid, force_redownload=force):
+    dl_quality = (quality or "192").strip() or "192"
+    if not service.start_track_download(pid, tid, force_redownload=force, quality=dl_quality):
         raise HTTPException(status_code=404, detail="Playlist or track not found")
     return RedirectResponse(f"/?playlist_id={pid}", status_code=303)
 

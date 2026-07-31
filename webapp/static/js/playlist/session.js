@@ -111,6 +111,48 @@ export class PlaylistSessionController {
                 }
             }
         });
+
+        this.attachPlayerTrackNav();
+    }
+
+    attachPlayerTrackNav() {
+        const hub = this.state.hub;
+        const go = (e) => {
+            e.preventDefault();
+            void this.goToPlayingTrack();
+        };
+        if (hub.titleEl) hub.titleEl.addEventListener('click', go);
+        if (hub.subEl) hub.subEl.addEventListener('click', go);
+        const coverWrap = document.getElementById('player-cover-wrap');
+        if (coverWrap) coverWrap.addEventListener('click', go);
+    }
+
+    scrollToCurrentTrack() {
+        const hub = this.state.hub;
+        if (!hub.currentTrackId) return;
+        this.transport.scrollTrackIntoView(hub.currentTrackId);
+        this.transport.updatePlayingRow();
+    }
+
+    async goToPlayingTrack() {
+        const hub = this.state.hub;
+        const track_id = hub.currentTrackId;
+        if (!track_id) return;
+
+        let playlist_id = String(hub.playingPlaylistId || '').trim();
+        if (!playlist_id && hub.lastPlayedTrackSnapshot) {
+            playlist_id = String(hub.lastPlayedTrackSnapshot.source_playlist_id || '').trim();
+        }
+        if (!playlist_id) playlist_id = String(hub.playlistId || '').trim();
+        if (!playlist_id) return;
+
+        const scroll = () => this.scrollToCurrentTrack();
+
+        if (hub.isHomeView || String(hub.playlistId || '') !== playlist_id) {
+            await this.navigatePlaylist(playlist_id, true, scroll);
+            return;
+        }
+        scroll();
     }
 
     initialize_playlist_state() {

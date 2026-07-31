@@ -111,6 +111,9 @@ export class PlaylistContextMenuController {
             };
         }
         let t = hub.tracks.find(function (x) { return x.id === tid; });
+        if (!t && hub.playingTracks) {
+            t = hub.playingTracks.find(function (x) { return x.id === tid; });
+        }
         let title = '';
         let artist = '';
         let album = '';
@@ -140,6 +143,67 @@ export class PlaylistContextMenuController {
             channel: artist,
             url: url,
             album: album,
+        };
+    }
+
+    buildTrackMenuPayload(track_id, row_el) {
+        const hub = this.state.hub;
+        const tid = String(track_id || '').trim();
+        if (!tid) return null;
+
+        let t = hub.tracks.find(function (x) { return x.id === tid; });
+        if (!t && hub.playingTracks) {
+            t = hub.playingTracks.find(function (x) { return x.id === tid; });
+        }
+
+        const row = row_el || (this.transport ? this.transport.rowForTrack(tid) : null);
+        const snap = hub.lastPlayedTrackSnapshot && hub.lastPlayedTrackSnapshot.id === tid
+            ? hub.lastPlayedTrackSnapshot
+            : null;
+
+        let playlist_id = String(hub.playlistId || '').trim();
+        if (row_el) {
+            playlist_id = String(hub.playlistId || '').trim();
+        } else {
+            playlist_id = String(hub.playingPlaylistId || '').trim();
+            if (!playlist_id && snap) {
+                playlist_id = String(snap.source_playlist_id || '').trim();
+            }
+            if (!playlist_id) playlist_id = String(hub.playlistId || '').trim();
+        }
+
+        const prefs = window.SpolocalQualityPrefs;
+        let play_src = '';
+        if (t && prefs) {
+            play_src = prefs.resolvePlaySrc(t) || t.play_src || '';
+        } else if (t) {
+            play_src = t.play_src || '';
+        } else if (row) {
+            play_src = row.getAttribute('data-play-src') || '';
+        } else if (hub.currentTrackId === tid && hub.audio) {
+            play_src = (hub.audio.currentSrc || hub.audio.src || '').trim();
+        }
+
+        const url = (t && t.url ? String(t.url).trim() : '')
+            || (row ? (row.getAttribute('data-track-url') || '').trim() : '')
+            || (snap && snap.url ? String(snap.url).trim() : '');
+        const ytid = (t && t.youtube_video_id ? String(t.youtube_video_id).trim() : '')
+            || (row ? (row.getAttribute('data-youtube-video-id') || '').trim() : '')
+            || (snap && snap.youtube_video_id ? String(snap.youtube_video_id).trim() : '');
+
+        if (!play_src && !url && !ytid) return null;
+
+        return {
+            type: 'track',
+            trackId: tid,
+            playlistId: playlist_id,
+            status: (t && t.status) || (row ? row.getAttribute('data-track-status') : '') || 'done',
+            playSrc: play_src,
+            url: url,
+            ytid: ytid,
+            title: (t && t.title) || (row ? row.getAttribute('data-title') : '') || (snap && snap.title) || '',
+            artist: (t && t.artist) || (row ? row.getAttribute('data-artist') : '') || (snap && snap.artist) || '',
+            album: (t && t.album != null ? String(t.album) : '') || (row ? row.getAttribute('data-album') : '') || (snap && snap.album ? String(snap.album) : '') || '',
         };
     }
 
@@ -246,34 +310,6 @@ export class PlaylistContextMenuController {
                 document.body.appendChild(f);
                 f.submit();
             }, true);
-        } else if (payload.type === 'now-playing') {
-            if (!hub.currentTrackId) return;
-            const ps = (hub.audio.currentSrc || hub.audio.src || '').trim();
-            const addHit = this.buildHitFromLibraryTrack(payload.trackId);
-            if (!ps && !addHit) return;
-            if (ps) {
-                mkBtn('Add to queue', () => {
-                    if (this.queue) {
-                        this.queue.enqueue_manual_play_next({
-                            source_playlist_id: String(hub.playingPlaylistId || hub.playlistId),
-                            track_id: String(hub.currentTrackId),
-                            play_src: ps,
-                            title: hub.titleEl.textContent || '',
-                            artist: hub.subEl.textContent || '',
-                            album: (hub.lastPlayedTrackSnapshot && hub.lastPlayedTrackSnapshot.album) ? String(hub.lastPlayedTrackSnapshot.album) : '',
-                            youtube_video_id: (hub.lastPlayedTrackSnapshot && hub.lastPlayedTrackSnapshot.youtube_video_id) || '',
-                            url: (hub.lastPlayedTrackSnapshot && hub.lastPlayedTrackSnapshot.url) || '',
-                        });
-                    }
-                }, false);
-            }
-            if (addHit) {
-                mkBtn('Add to playlist', () => {
-                    if (typeof window.openAddToPlaylistAtPoint === 'function') {
-                        window.openAddToPlaylistAtPoint(addHit, clientX, clientY);
-                    }
-                }, false);
-            }
         }
 
         hub.contextMenuEl.classList.remove('hidden');
@@ -292,16 +328,13 @@ export class PlaylistContextMenuController {
 
     handleContextMenu(e) {
         const hub = this.state.hub;
-        if (e.target.closest && e.target.closest('#player-title') && hub.currentTrackId) {
-            const hit = this.buildHitFromLibraryTrack(hub.currentTrackId);
-            const hasAudio = !!(hub.audio && (hub.audio.currentSrc || hub.audio.src || '').trim());
-            if (hit || hasAudio) {
+        const player_meta = e.target.closest && e.target.closest('#player-title, #player-subtitle, #player-cover-wrap');
+        if (player_meta && hub.currentTrackId) {
+            const payload = this.buildTrackMenuPayload(hub.currentTrackId);
+            if (payload) {
                 e.preventDefault();
                 e.stopPropagation();
-                this.openContextMenu(e.clientX, e.clientY, {
-                    type: 'now-playing',
-                    trackId: hub.currentTrackId,
-                });
+                this.openContextMenu(e.clientX, e.clientY, payload);
                 return;
             }
         }
@@ -310,18 +343,9 @@ export class PlaylistContextMenuController {
             e.preventDefault();
             const tid = trackRow.getAttribute('data-track-id');
             if (!tid) return;
-            this.openContextMenu(e.clientX, e.clientY, {
-                type: 'track',
-                trackId: tid,
-                playlistId: String(hub.playlistId),
-                status: trackRow.getAttribute('data-track-status') || '',
-                playSrc: trackRow.getAttribute('data-play-src') || '',
-                url: trackRow.getAttribute('data-track-url') || '',
-                ytid: trackRow.getAttribute('data-youtube-video-id') || '',
-                title: trackRow.getAttribute('data-title') || '',
-                artist: trackRow.getAttribute('data-artist') || '',
-                album: trackRow.getAttribute('data-album') || '',
-            });
+            const payload = this.buildTrackMenuPayload(tid, trackRow);
+            if (!payload) return;
+            this.openContextMenu(e.clientX, e.clientY, payload);
             return;
         }
         const plCard = e.target.closest('.playlist-card');

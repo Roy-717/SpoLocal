@@ -358,7 +358,7 @@ export class PlaylistDownloadController {
             ? '/api/playlists/' + encodeURIComponent(playlistId) + '/downloads/quality'
             : '/api/downloads/quality-all';
         try {
-            await fetch(url, {
+            const r = await fetch(url, {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: {
@@ -367,7 +367,35 @@ export class PlaylistDownloadController {
                 },
                 body: JSON.stringify({ quality: q }),
             });
-        } catch (e) {}
+            if (!r.ok) {
+                alert('Could not queue downloads. Try again in a moment.');
+                return;
+            }
+            const data = await r.json();
+            const kbps = data.quality || q;
+            const prefs = window.SpolocalQualityPrefs;
+            const label = prefs ? prefs.formatLabel(kbps) : kbps + ' kbps';
+            const queued = Number(data.queued) || 0;
+            const already = Number(data.already_have) || 0;
+            const ineligible = Number(data.ineligible) || 0;
+            const dupes = Number(data.duplicates) || 0;
+            const parts = [];
+            if (queued) parts.push('Queued ' + queued + ' at ' + label);
+            if (already) parts.push(already + ' already at ' + label);
+            if (ineligible) parts.push(ineligible + ' missing URL/title');
+            if (dupes) parts.push(dupes + ' duplicate list entries ignored');
+            const msg = parts.length ? parts.join('. ') + '.' : 'Nothing to queue at ' + label + '.';
+            const hub = this.state.hub;
+            const idle = document.getElementById('dl-idle-msg');
+            if (idle) {
+                idle.textContent = msg;
+                idle.classList.remove('hidden');
+            } else {
+                alert(msg);
+            }
+        } catch (e) {
+            alert('Could not queue downloads.');
+        }
         this.refreshProgress();
     }
 

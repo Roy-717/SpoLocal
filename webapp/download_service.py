@@ -519,16 +519,35 @@ class DownloadService:
                 return m.group(1)
         return youtube_video_id_from_url(track.url) or ""
 
+    def _relpath_matches_quality(self, relpath: str, qk: str) -> bool:
+        """True when ``relpath`` exists on disk and matches quality key ``qk`` (e.g. ``64``, ``192``)."""
+        try:
+            if not (self.root / "downloads" / relpath).resolve().is_file():
+                return False
+        except OSError:
+            return False
+        inferred = kbps_from_relpath(relpath)
+        want = variant_key(parse_quality_kbps(qk))
+        if inferred is not None:
+            return variant_key(inferred) == want
+        return want == variant_key(DEFAULT_KBPS)
+
+    def _track_can_queue_quality_download(self, track: Track) -> bool:
+        if (track.url or "").strip() or (track.youtube_video_id or "").strip():
+            return True
+        if self._youtube_video_id_for_track(track):
+            return True
+        return bool((track.title or "").strip() and (track.artist or "").strip())
+
     def _track_has_resolved_file(self, track: Track, quality: Optional[str] = None) -> bool:
         variants = track.media_variants or {}
         if quality:
             qk = variant_key(parse_quality_kbps(quality))
-            rel = variants.get(qk) or (track.media_relpath if qk == "192" else None)
-            if rel:
-                try:
-                    return (self.root / "downloads" / rel).resolve().is_file()
-                except OSError:
-                    return False
+            rel = variants.get(qk)
+            if rel and self._relpath_matches_quality(rel, qk):
+                return True
+            if qk == variant_key(DEFAULT_KBPS) and track.media_relpath:
+                return self._relpath_matches_quality(track.media_relpath, qk)
             return False
         for rel in variants.values():
             if not rel:
@@ -928,38 +947,98 @@ class DownloadService:
                     n += 1
         return n
 
+    def _track_content_key(self, track: Track) -> str:
+        """Stable key for deduping the same song across playlists."""
+        vid = self._youtube_video_id_for_track(track)
+        if vid:
+            return f"yt:{vid}"
+        sid = spotify_track_id_from_url(track.url)
+        if sid:
+            return f"sp:{sid}"
+        artist = (track.artist or "").strip().lower()
+        title = (track.title or "").strip().lower()
+        if artist and title:
+            return f"meta:{artist}|{title}"
+        return f"id:{track.id}"
+
+    def _tally_playlist_quality_downloads(
+        self,
+        pl: Playlist,
+        q: str,
+        seen: Optional[set[str]] = None,
+    ) -> dict[str, int]:
+        """Count queue outcomes for one playlist. ``seen`` dedupes library-wide bulk runs."""
+        if self.is_liked_songs_playlist(pl.id):
+            return {"queued": 0, "already_have": 0, "ineligible": 0, "duplicates": 0}
+        self.hydrate_media_paths(pl, fill_albums=False, persist=False)
+        queued = 0
+        already_have = 0
+        ineligible = 0
+        duplicates = 0
+        for t in pl.tracks:
+            key = self._track_content_key(t)
+            if seen is not None:
+                if key in seen:
+                    duplicates += 1
+                    continue
+                seen.add(key)
+            if not self._track_can_queue_quality_download(t):
+                ineligible += 1
+                continue
+            if self._track_has_resolved_file(t, q):
+                already_have += 1
+                continue
+            if self.start_track_download(pl.id, t.id, quality=q):
+                queued += 1
+            else:
+                ineligible += 1
+        return {
+            "queued": queued,
+            "already_have": already_have,
+            "ineligible": ineligible,
+            "duplicates": duplicates,
+        }
+
     def queue_playlist_quality_downloads(self, playlist_id: str, quality: str) -> Optional[dict]:
         """Queue downloads for every track missing the given quality variant. Returns None if playlist missing."""
         pl = self.get_playlist(playlist_id.strip())
         if not pl:
             return None
         q = variant_key(parse_quality_kbps(quality))
-        queued = 0
-        skipped = 0
-        for t in pl.tracks:
-            if not (t.url or t.youtube_video_id):
-                skipped += 1
-                continue
-            if self._track_has_resolved_file(t, q):
-                skipped += 1
-                continue
-            if self.start_track_download(pl.id, t.id, quality=q):
-                queued += 1
-            else:
-                skipped += 1
-        return {"queued": queued, "skipped": skipped, "quality": q}
+        tallies = self._tally_playlist_quality_downloads(pl, q)
+        skipped = tallies["already_have"] + tallies["ineligible"]
+        return {
+            "queued": tallies["queued"],
+            "skipped": skipped,
+            "already_have": tallies["already_have"],
+            "ineligible": tallies["ineligible"],
+            "duplicates": tallies["duplicates"],
+            "quality": q,
+        }
 
     def queue_all_quality_downloads(self, quality: str) -> dict:
-        """Queue missing quality variants across all playlists."""
+        """Queue missing quality variants across all playlists (excluding Liked Songs)."""
         q = variant_key(parse_quality_kbps(quality))
+        seen: set[str] = set()
         queued = 0
-        skipped = 0
+        already_have = 0
+        ineligible = 0
+        duplicates = 0
         for pl in self.playlists.values():
-            result = self.queue_playlist_quality_downloads(pl.id, quality)
-            if result:
-                queued += result["queued"]
-                skipped += result["skipped"]
-        return {"queued": queued, "skipped": skipped, "quality": q}
+            tallies = self._tally_playlist_quality_downloads(pl, q, seen)
+            queued += tallies["queued"]
+            already_have += tallies["already_have"]
+            ineligible += tallies["ineligible"]
+            duplicates += tallies["duplicates"]
+        skipped = already_have + ineligible
+        return {
+            "queued": queued,
+            "skipped": skipped,
+            "already_have": already_have,
+            "ineligible": ineligible,
+            "duplicates": duplicates,
+            "quality": q,
+        }
 
     def progress_api_payload(self) -> dict:
         """Shape used by GET /api/progress (active jobs + queue summary)."""

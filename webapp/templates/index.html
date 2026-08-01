@@ -133,8 +133,8 @@
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            <div class="space-y-5">
-                <div>
+            <div class="settings-sections">
+                <div class="settings-section">
                     <div class="flex items-center justify-between gap-2 mb-1">
                         <h3 class="text-sm font-semibold text-white">Playback quality</h3>
                         <span id="settings-playback-kbps-value" class="text-xs text-[#1DB954] tabular-nums">High (192 kbps)</span>
@@ -146,13 +146,22 @@
                         <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="192">High</button>
                     </div>
                 </div>
-                <div>
+                <div class="settings-section">
                     <div class="flex items-center justify-between gap-2 mb-1">
                         <h3 class="text-sm font-semibold text-white">Default download quality</h3>
                         <span id="settings-download-kbps-value" class="text-xs text-[#1DB954] tabular-nums">High (192 kbps)</span>
                     </div>
                     <p class="text-xs text-[#727272] mb-3">Used when adding songs from search.</p>
                     <div id="settings-download-tiers" class="quality-tier-group flex gap-1" role="radiogroup" aria-label="Download quality">
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="64">Low</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="120">Medium</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="192">High</button>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h3 class="text-sm font-semibold text-white mb-1">Download library</h3>
+                    <p class="text-xs text-[#727272] mb-3">Queue missing files for every playlist at a chosen quality.</p>
+                    <div id="settings-library-download-tiers" class="quality-tier-group flex gap-1">
                         <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="64">Low</button>
                         <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="120">Medium</button>
                         <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="192">High</button>
@@ -344,15 +353,15 @@
     <div id="lyrics-panel"
          class="hidden fixed left-0 right-0 top-16 lg:left-[20rem] lg:right-[20rem] z-[35] flex flex-col border-t border-[#282828] shadow-[0_-8px_32px_rgba(0,0,0,0.5)]"
          style="background-color: #121212;">
-        <div class="w-full flex flex-col min-h-0 flex-1" style="padding: 1rem 0 0.75rem 1.25rem;">
+        <div class="lyrics-panel-inner w-full flex flex-col min-h-0 flex-1">
             <div class="flex items-center justify-between gap-3 mb-3 shrink-0">
                 <div class="flex items-center gap-3 min-w-0">
                     <span id="lyrics-title" class="text-xs font-semibold uppercase tracking-wider shrink-0">Lyrics</span>
                 </div>
-                <div class="flex items-center gap-2 shrink-0">
-                    <div id="lyrics-mode-switch" class="inline-flex rounded-full p-0.5" style="background-color: rgba(255,255,255,0.1);">
-                        <button type="button" id="lyrics-tab-read" class="lyrics-tab px-3 py-1.5 text-xs font-semibold rounded-full">Read</button>
-                        <button type="button" id="lyrics-tab-edit" class="lyrics-tab px-3 py-1.5 text-xs font-semibold rounded-full">Edit</button>
+                <div class="flex items-center gap-2 shrink-0 pr-0.5">
+                    <div id="lyrics-mode-switch">
+                        <button type="button" id="lyrics-tab-read" class="lyrics-tab">Read</button>
+                        <button type="button" id="lyrics-tab-edit" class="lyrics-tab">Edit</button>
                     </div>
                 </div>
             </div>

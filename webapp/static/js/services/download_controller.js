@@ -98,6 +98,9 @@ export class PlaylistDownloadController {
             }
 
             const entries = Object.entries(prog && typeof prog === 'object' ? prog : {});
+            const active = entries.length;
+            const has_pending = (remaining != null && remaining > 0) || active > 0
+                || (queue_depth != null && queue_depth > 0);
             const curKeys = new Set(entries.map(([k]) => k));
             let job_completed = false;
             if (this._prevJobKeys.size > 0) {
@@ -110,23 +113,20 @@ export class PlaylistDownloadController {
             }
             this._prevJobKeys = curKeys;
 
-            const jobDomKey = entries.length === 0 ? '__idle__' : JSON.stringify(entries.map(([k, v]) => [k, v && v.phase, v && v.percent, v && v.speed, v && v.eta, v && v.title, v && v.artist]));
+            const jobDomKey = entries.length === 0
+                ? (has_pending ? '__pending__:' + String(remaining) + ':' + String(queue_depth) : '__idle__')
+                : JSON.stringify(entries.map(([k, v]) => [k, v && v.phase, v && v.percent, v && v.speed, v && v.eta, v && v.title, v && v.artist]));
             const errDomKey = errors.length === 0 ? '__noerr__' : JSON.stringify(errors.map(function (r) {
                 return [r.playlist_id, r.track_id, r.error || '', r.title || '', r.artist || ''];
             }));
 
             if (hub.dlCount) {
-                const active = entries.length;
                 const searching = Object.values(prog || {}).filter(p => p && p.phase === 'searching').length;
                 const parts = [];
-                if (remaining != null) {
-                    if (remaining > 0) parts.push(remaining + ' left');
-                }
+                if (remaining != null && remaining > 0) parts.push(remaining + ' left');
                 if (active > 0) parts.push(active + ' active');
                 if (searching > 0) parts.push(searching + ' searching');
-                if (queue_depth != null && queue_depth > 0 && remaining != null && remaining > active) {
-                    parts.push(queue_depth + ' in buffer');
-                }
+                if (queue_depth != null && queue_depth > 0) parts.push(queue_depth + ' queued');
                 const label = parts.length ? parts.join(' · ') : 'Idle';
                 hub.dlCount.textContent = label;
             }
@@ -136,9 +136,20 @@ export class PlaylistDownloadController {
                     this.__dlJobsDomKey = jobDomKey;
                     if (entries.length === 0) {
                         hub.dlList.innerHTML = '';
-                        if (hub.dlIdle) {
-                            hub.dlIdle.classList.remove('hidden');
-                            hub.dlList.appendChild(hub.dlIdle);
+                        if (!has_pending) {
+                            if (hub.dlIdle) {
+                                hub.dlIdle.classList.remove('hidden');
+                                hub.dlList.appendChild(hub.dlIdle);
+                            }
+                        } else {
+                            if (hub.dlIdle) hub.dlIdle.classList.add('hidden');
+                            const pending = document.createElement('p');
+                            pending.className = 'text-xs text-[#727272]';
+                            const ql = queue_depth || 0;
+                            pending.textContent = ql > 0
+                                ? ql + ' download' + (ql === 1 ? '' : 's') + ' queued…'
+                                : 'Preparing downloads…';
+                            hub.dlList.appendChild(pending);
                         }
                     } else {
                         if (hub.dlIdle) hub.dlIdle.classList.add('hidden');
@@ -163,6 +174,7 @@ export class PlaylistDownloadController {
                             const phaseEl = document.createElement('span');
                             phaseEl.textContent = p.phase === 'searching' ? 'Searching…'
                                 : p.phase === 'converting' ? 'Converting…'
+                                : p.phase === 'queued' ? 'Queued…'
                                 : p.percent != null ? p.percent + '%' : 'Starting…';
                             const rightEl = document.createElement('span');
                             const eparts = [];
@@ -337,6 +349,26 @@ export class PlaylistDownloadController {
         } finally {
             this.progressInFlight = false;
         }
+    }
+
+    /** Queue bulk downloads at a quality tier (playlist-specific or whole library). */
+    async queueQualityDownloads(playlistId, quality) {
+        const q = String(quality);
+        const url = playlistId
+            ? '/api/playlists/' + encodeURIComponent(playlistId) + '/downloads/quality'
+            : '/api/downloads/quality-all';
+        try {
+            await fetch(url, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ quality: q }),
+            });
+        } catch (e) {}
+        this.refreshProgress();
     }
 
 }

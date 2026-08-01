@@ -844,13 +844,14 @@ class DownloadService:
         )
 
     def downloads_remaining_count(self) -> int:
-        """How many tracks are still queued or actively downloading (across all playlists)."""
-        n = 0
+        """How many downloads are still in the pipeline (queued, running, or supplementary)."""
+        pipeline = self.job_queue.qsize() + len(self.progress)
+        status_n = 0
         for pl in self.playlists.values():
             for t in pl.tracks:
                 if t.status in (DownloadStatus.queued, DownloadStatus.downloading):
-                    n += 1
-        return n
+                    status_n += 1
+        return max(pipeline, status_n)
 
     def error_tracks_for_sidebar(self) -> List[dict]:
         """All tracks in error state (any playlist), for the downloads sidebar."""
@@ -883,6 +884,39 @@ class DownloadService:
                 if self.start_track_download(pl.id, t.id, force_redownload=False):
                     n += 1
         return n
+
+    def queue_playlist_quality_downloads(self, playlist_id: str, quality: str) -> Optional[dict]:
+        """Queue downloads for every track missing the given quality variant. Returns None if playlist missing."""
+        pl = self.get_playlist(playlist_id.strip())
+        if not pl:
+            return None
+        q = variant_key(parse_quality_kbps(quality))
+        queued = 0
+        skipped = 0
+        for t in pl.tracks:
+            if not (t.url or t.youtube_video_id):
+                skipped += 1
+                continue
+            if self._track_has_resolved_file(t, q):
+                skipped += 1
+                continue
+            if self.start_track_download(pl.id, t.id, quality=q):
+                queued += 1
+            else:
+                skipped += 1
+        return {"queued": queued, "skipped": skipped, "quality": q}
+
+    def queue_all_quality_downloads(self, quality: str) -> dict:
+        """Queue missing quality variants across all playlists."""
+        q = variant_key(parse_quality_kbps(quality))
+        queued = 0
+        skipped = 0
+        for pl in self.playlists.values():
+            result = self.queue_playlist_quality_downloads(pl.id, quality)
+            if result:
+                queued += result["queued"]
+                skipped += result["skipped"]
+        return {"queued": queued, "skipped": skipped, "quality": q}
 
     def progress_api_payload(self) -> dict:
         """Shape used by GET /api/progress (active jobs + queue summary)."""

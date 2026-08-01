@@ -18,14 +18,17 @@ export class PlaylistContextMenuController {
         this.transport = null;
         /** @type {import('./track_info_controller.js').TrackInfoController|null} */
         this.trackInfo = null;
+        /** @type {import('../services/download_controller.js').PlaylistDownloadController|null} */
+        this.download = null;
     }
 
     /** Set cross-controller references after all controllers are created. */
-    setCrossRefs(queue, editModal, transport, trackInfo) {
+    setCrossRefs(queue, editModal, transport, trackInfo, download) {
         this.queue = queue;
         this.editModal = editModal;
         this.transport = transport;
         this.trackInfo = trackInfo;
+        this.download = download;
     }
 
     /** Wire up context menu event listeners. */
@@ -301,6 +304,26 @@ export class PlaylistContextMenuController {
                     this.editModal.openPlaylistEditModal({ id: pid, name: name, bio: bio });
                 }
             }, false);
+            const quality_labels = { '64': 'Low (64 kbps)', '120': 'Medium (120 kbps)', '192': 'High (192 kbps)' };
+            ['64', '120', '192'].forEach((q) => {
+                mkBtn('Download all at ' + quality_labels[q], () => {
+                    const n = payload.playlistName || 'this playlist';
+                    if (!confirm('Queue download of all tracks in "' + n + '" at ' + quality_labels[q] + '?')) return;
+                    if (this.download) {
+                        this.download.queueQualityDownloads(payload.playlistId, q);
+                    } else {
+                        fetch('/api/playlists/' + encodeURIComponent(payload.playlistId) + '/downloads/quality', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: {
+                                'Accept': 'application/json',
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ quality: q }),
+                        }).catch(() => {});
+                    }
+                }, false);
+            });
             mkBtn('Delete playlist', () => {
                 const n = payload.playlistName || 'this playlist';
                 if (!confirm('Delete playlist "' + n + '"? Files on disk are not removed.')) return;

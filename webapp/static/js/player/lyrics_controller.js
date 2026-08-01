@@ -541,21 +541,20 @@ export class PlaylistLyricsController {
             : true;
         const activeText = bgIsDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)';
 
-        const activeBaseClass = 'lyrics-tab px-3 py-1.5 text-xs font-semibold rounded-full';
-        const inactiveBaseClass = 'lyrics-tab px-3 py-1.5 text-xs font-semibold rounded-full';
+        const tabClass = 'lyrics-tab';
 
         if (readOn) {
-            hub.lyricsTabRead.className = activeBaseClass;
+            hub.lyricsTabRead.className = tabClass;
             hub.lyricsTabRead.style.backgroundColor = bgIsDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
             hub.lyricsTabRead.style.color = currentTextColor;
-            hub.lyricsTabEdit.className = inactiveBaseClass;
+            hub.lyricsTabEdit.className = tabClass;
             hub.lyricsTabEdit.style.backgroundColor = 'transparent';
             hub.lyricsTabEdit.style.color = activeText;
         } else {
-            hub.lyricsTabRead.className = inactiveBaseClass;
+            hub.lyricsTabRead.className = tabClass;
             hub.lyricsTabRead.style.backgroundColor = 'transparent';
             hub.lyricsTabRead.style.color = activeText;
-            hub.lyricsTabEdit.className = activeBaseClass;
+            hub.lyricsTabEdit.className = tabClass;
             hub.lyricsTabEdit.style.backgroundColor = bgIsDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
             hub.lyricsTabEdit.style.color = currentTextColor;
         }

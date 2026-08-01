@@ -165,6 +165,30 @@ body { background: #121212; color: #fff; }
     border: 0;
     cursor: pointer;
 }
+#lyrics-panel .lyrics-panel-inner {
+    padding: 1rem 1.25rem 0.75rem;
+}
+
+#lyrics-mode-switch {
+    display: inline-flex;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border-radius: 9999px;
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+#lyrics-panel .lyrics-tab {
+    padding: 0.375rem 0.875rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.25;
+    border: none;
+    border-radius: 9999px;
+    cursor: pointer;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.85);
+}
+
 #lyrics-panel {
     overflow: hidden;
     overscroll-behavior: contain;
@@ -771,4 +795,14 @@ body.mobile-queue-open #sidebar-queue {
 .quality-tier-btn--active:hover {
     color: #000;
     background: #1ed760;
+}
+
+.settings-sections > .settings-section + .settings-section {
+    margin-top: 1.75rem;
+    padding-top: 1.75rem;
+    border-top: 1px solid #3e3e3e;
+}
+
+.settings-section .quality-tier-group {
+    gap: 0.5rem;
 }

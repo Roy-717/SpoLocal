@@ -36,8 +36,8 @@ export class PlaylistSessionController {
         this.transport.setCrossRefs(this.queue, this.lyrics, this.home);
         this.queue.setCrossRefs(this.lyrics);
         this.editModal.setCrossRefs(this.contextMenu);
-        this.settings.setCrossRefs(this.transport);
-        this.contextMenu.setCrossRefs(this.queue, this.editModal, this.transport, this.trackInfo);
+        this.settings.setCrossRefs(this.transport, this.download);
+        this.contextMenu.setCrossRefs(this.queue, this.editModal, this.transport, this.trackInfo, this.download);
         this.download.setCrossRefs(this);
     }
 
@@ -483,7 +483,7 @@ export class PlaylistSessionController {
             } catch (e) {}
         }
 
-        const t = (hub.playingTracks.length ? hub.playingTracks : hub.tracks).find(x => x.id === trs && x.play_src);
+        let t = (hub.playingTracks.length ? hub.playingTracks : hub.tracks).find(x => x.id === trs && x.play_src);
         if (!t) return;
 
         hub.playingPlaylistId = pls;
@@ -499,7 +499,20 @@ export class PlaylistSessionController {
             youtube_video_id: (t.youtube_video_id || '').trim(),
             source_playlist_id: pls,
         };
-        hub.audio.src = t.play_src;
+
+        const prefs = window.SpolocalQualityPrefs;
+        const playback_q = prefs ? String(prefs.playbackKbps()) : '192';
+        let play_src = prefs ? prefs.resolvePlaybackPlaySrc(t, playback_q) : t.play_src;
+        if (prefs && !prefs.hasVariant(t, playback_q)) {
+            const ready = await this.transport.ensurePlaybackVariantReady(t, pls, trs, playback_q, 0);
+            if (ready) {
+                t = this.transport.findTrackInHub(trs) || t;
+                play_src = prefs.resolvePlaybackPlaySrc(t, playback_q);
+            }
+        }
+        if (!play_src) return;
+
+        hub.audio.src = play_src;
         hub.titleEl.textContent = t.title;
         hub.subEl.textContent = t.artist;
         if (typeof window.loadCover === 'function') window.loadCover(trs);

@@ -420,7 +420,7 @@ export class PlaylistTransportController {
             }
         }
 
-        const playSrc = prefs ? prefs.resolveExactPlaySrc(t, playback_q) : (t.play_src || preliminarySrc);
+        const playSrc = prefs ? prefs.resolvePlaybackPlaySrc(t, playback_q) : (t.play_src || preliminarySrc);
         if (!playSrc) return;
 
         if (hub.pendingRestoreOnMeta) {
@@ -1198,29 +1198,42 @@ export class PlaylistTransportController {
         const playback_q = prefs ? String(prefs.playbackKbps()) : '192';
         let t = this.findTrackInHub(hub.currentTrackId);
         const pid = hub.playingPlaylistId || hub.playlistId;
-        if (prefs && t && !prefs.hasVariant(t, playback_q) && pid) {
+        if (!prefs || !t || !pid) return;
+
+        if (!prefs.hasVariant(t, playback_q)) {
             const ok = await this.ensurePlaybackVariantReady(t, pid, hub.currentTrackId, playback_q, this._playGeneration);
             if (!ok) return;
             t = this.findTrackInHub(hub.currentTrackId) || t;
         }
-        const src = prefs ? prefs.resolveExactPlaySrc(t, playback_q) : '';
-        if (!src) return;
-        this.trySoftReloadCurrentAudioSource();
+
+        const desired = prefs.resolvePlaybackPlaySrc(t, playback_q);
+        if (!desired) return;
+
+        const current_path = prefs.normalizeMediaPath(hub.audio.currentSrc || hub.audio.src);
+        const desired_path = prefs.normalizeMediaPath(desired);
+        if (current_path && desired_path && current_path === desired_path) return;
+
+        const resume_time = Math.max(0, hub.audio.currentTime || 0);
+        hub.audio.pause();
+        hub.audio.src = desired;
+        const on_ready = () => {
+            if (resume_time > 0.25 && hub.audio.duration && resume_time < hub.audio.duration - 0.35) {
+                try { hub.audio.currentTime = resume_time; } catch (e) { /* ignore */ }
+            }
+            hub.audio.play().catch(() => {});
+            this.setPlayUi(true);
+            this.updateMediaSessionPlaybackState();
+        };
+        if (hub.audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+            on_ready();
+        } else {
+            hub.audio.addEventListener('canplay', on_ready, { once: true });
+        }
     }
 
     async playTrackById(trackId) {
         const hub = this.state.hub;
         if (!hub.audio) return;
-        if (hub.currentTrackId === trackId && hub.audio.src) {
-            if (!hub.playingPlaylistId) hub.playingPlaylistId = hub.playlistId;
-            if (hub.audio.paused) {
-                hub.audio.play().catch(err => this.handlePlayError(err));
-            } else {
-                hub.audio.pause();
-            }
-            this.update_like_button_ui();
-            return;
-        }
 
         let t = hub.tracks.find(x => x.id === trackId);
         const fromViewed = !!t;
@@ -1228,10 +1241,28 @@ export class PlaylistTransportController {
             t = hub.playingTracks.find(x => x.id === trackId);
         }
         if (!t) return;
-        this._playGeneration = (this._playGeneration || 0) + 1;
-        const playGen = this._playGeneration;
+
         const prefs = window.SpolocalQualityPrefs;
         const playback_q = prefs ? String(prefs.playbackKbps()) : '192';
+        const desired_src = prefs ? prefs.resolvePlaybackPlaySrc(t, playback_q) : (t.play_src || '');
+        const current_path = prefs ? prefs.normalizeMediaPath(hub.audio.currentSrc || hub.audio.src) : '';
+        const desired_path = prefs ? prefs.normalizeMediaPath(desired_src) : '';
+
+        if (hub.currentTrackId === trackId && hub.audio.src) {
+            if (!desired_src || (current_path && desired_path && current_path === desired_path)) {
+                if (!hub.playingPlaylistId) hub.playingPlaylistId = hub.playlistId;
+                if (hub.audio.paused) {
+                    hub.audio.play().catch(err => this.handlePlayError(err));
+                } else {
+                    hub.audio.pause();
+                }
+                this.update_like_button_ui();
+                return;
+            }
+        }
+
+        this._playGeneration = (this._playGeneration || 0) + 1;
+        const playGen = this._playGeneration;
 
         if (fromViewed) {
             const playingPidChanged = String(hub.playingPlaylistId || '') !== String(hub.playlistId || '');
@@ -1256,7 +1287,7 @@ export class PlaylistTransportController {
             t = this.findTrackInHub(trackId) || t;
         }
 
-        const playSrc = prefs ? prefs.resolveExactPlaySrc(t, playback_q) : (t.play_src || '');
+        const playSrc = prefs ? prefs.resolvePlaybackPlaySrc(t, playback_q) : (t.play_src || '');
         if (!playSrc) return;
 
         if (hub.pendingRestoreOnMeta) {
@@ -1299,9 +1330,7 @@ export class PlaylistTransportController {
         }
         const prefs = window.SpolocalQualityPrefs;
         const q = prefs ? prefs.playbackKbps() : 192;
-        const exact = prefs ? prefs.resolveExactPlaySrc(t, q) : '';
-        if (exact) return exact;
-        return prefs ? prefs.resolvePlaySrc(t) : (t && t.play_src ? String(t.play_src).trim() : '');
+        return prefs ? prefs.resolvePlaybackPlaySrc(t, q) : (t && t.play_src ? String(t.play_src).trim() : '');
     }
 
     trySoftReloadCurrentAudioSource() {

@@ -917,6 +917,26 @@ async def api_retry_all_errors():
     return JSONResponse({"ok": True, "queued": n})
 
 
+class QualityDownloadBody(BaseModel):
+    quality: str = Field(..., min_length=1)
+
+
+@app.post("/api/playlists/{playlist_id}/downloads/quality")
+async def api_playlist_quality_downloads(playlist_id: str, body: QualityDownloadBody):
+    """Queue downloads for every track in a playlist missing the given quality variant."""
+    result = service.queue_playlist_quality_downloads(playlist_id, body.quality)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    return JSONResponse({"ok": True, **result})
+
+
+@app.post("/api/downloads/quality-all")
+async def api_quality_downloads_all(body: QualityDownloadBody):
+    """Queue missing quality variants for every track in every playlist."""
+    result = service.queue_all_quality_downloads(body.quality)
+    return JSONResponse({"ok": True, **result})
+
+
 @app.get("/api/progress")
 async def api_progress():
     """Live per-track download progress plus how many downloads are left in the queue."""

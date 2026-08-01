@@ -7,10 +7,13 @@ export class SettingsController {
         this.state = state;
         /** @type {import('../player/transport_controller.js').PlaylistTransportController|null} */
         this.transport = null;
+        /** @type {import('../services/download_controller.js').PlaylistDownloadController|null} */
+        this.download = null;
     }
 
-    setCrossRefs(transport) {
+    setCrossRefs(transport, download) {
         this.transport = transport;
+        this.download = download;
     }
 
     init() {
@@ -23,6 +26,7 @@ export class SettingsController {
         hub.settingsPlaybackValue = document.getElementById('settings-playback-kbps-value');
         hub.settingsDownloadTiers = document.getElementById('settings-download-tiers');
         hub.settingsDownloadValue = document.getElementById('settings-download-kbps-value');
+        hub.settingsLibraryDownloadTiers = document.getElementById('settings-library-download-tiers');
 
         if (hub.settingsOpenBtn) {
             hub.settingsOpenBtn.addEventListener('click', () => this.open());
@@ -54,6 +58,29 @@ export class SettingsController {
                 (v) => prefs.setDownloadKbps(v),
                 () => self._update_labels(),
             );
+        }
+        if (prefs && hub.settingsLibraryDownloadTiers) {
+            const quality_labels = { 64: 'Low (64 kbps)', 120: 'Medium (120 kbps)', 192: 'High (192 kbps)' };
+            hub.settingsLibraryDownloadTiers.querySelectorAll('.quality-tier-btn').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const kbps = prefs.clampKbps(btn.getAttribute('data-kbps'));
+                    const label = quality_labels[kbps] || prefs.formatLabel(kbps);
+                    if (!confirm('Queue download of all tracks in every playlist at ' + label + '?')) return;
+                    if (self.download) {
+                        self.download.queueQualityDownloads(null, kbps);
+                    } else {
+                        fetch('/api/downloads/quality-all', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: {
+                                'Accept': 'application/json',
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ quality: String(kbps) }),
+                        }).catch(() => {});
+                    }
+                });
+            });
         }
 
         this.sync_ui();

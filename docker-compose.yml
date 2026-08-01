@@ -9,7 +9,9 @@ services:
     volumes:
       - ./downloads:/app/downloads
       - ./data:/data
-      - ./webapp/static:/app/webapp/static
+      # Mount only live-edited assets; leave static/pwa/ from the image (npm run build:pwa).
+      - ./webapp/static/js:/app/webapp/static/js
+      - ./webapp/static/css:/app/webapp/static/css
       - ./webapp/templates:/app/webapp/templates
       - ./webapp/main.py:/app/webapp/main.py
       - ./webapp/download_service.py:/app/webapp/download_service.py

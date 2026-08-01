@@ -1,5 +1,5 @@
 /**
- * Settings modal: playback and download MP3 kbps sliders (32–192).
+ * Settings modal: playback and download quality tiers (64 / 120 / 192 kbps).
  */
 export class SettingsController {
     /** @param {import('../player/player_state.js').PlaylistPlayerState} state */
@@ -19,9 +19,9 @@ export class SettingsController {
         hub.settingsBackdrop = document.getElementById('settings-modal-backdrop');
         hub.settingsClose = document.getElementById('settings-close');
         hub.settingsOpenBtn = document.getElementById('open-settings');
-        hub.settingsPlaybackSlider = document.getElementById('settings-playback-kbps');
+        hub.settingsPlaybackTiers = document.getElementById('settings-playback-tiers');
         hub.settingsPlaybackValue = document.getElementById('settings-playback-kbps-value');
-        hub.settingsDownloadSlider = document.getElementById('settings-download-kbps');
+        hub.settingsDownloadTiers = document.getElementById('settings-download-tiers');
         hub.settingsDownloadValue = document.getElementById('settings-download-kbps-value');
 
         if (hub.settingsOpenBtn) {
@@ -34,25 +34,26 @@ export class SettingsController {
             hub.settingsClose.addEventListener('click', () => this.close());
         }
 
+        const prefs = window.SpolocalQualityPrefs;
         const self = this;
-        if (hub.settingsPlaybackSlider) {
-            hub.settingsPlaybackSlider.addEventListener('input', function () {
-                const prefs = window.SpolocalQualityPrefs;
-                if (!prefs) return;
-                const v = prefs.clampKbps(hub.settingsPlaybackSlider.value);
-                prefs.setPlaybackKbps(v);
-                self._update_slider_labels();
-                if (self.transport) self.transport.onPlaybackQualityChanged();
-            });
+        if (prefs && hub.settingsPlaybackTiers) {
+            prefs.bindTierGroup(
+                hub.settingsPlaybackTiers,
+                () => prefs.playbackKbps(),
+                (v) => prefs.setPlaybackKbps(v),
+                () => {
+                    self._update_labels();
+                    if (self.transport) self.transport.onPlaybackQualityChanged();
+                },
+            );
         }
-        if (hub.settingsDownloadSlider) {
-            hub.settingsDownloadSlider.addEventListener('input', function () {
-                const prefs = window.SpolocalQualityPrefs;
-                if (!prefs) return;
-                const v = prefs.clampKbps(hub.settingsDownloadSlider.value);
-                prefs.setDownloadKbps(v);
-                self._update_slider_labels();
-            });
+        if (prefs && hub.settingsDownloadTiers) {
+            prefs.bindTierGroup(
+                hub.settingsDownloadTiers,
+                () => prefs.downloadKbps(),
+                (v) => prefs.setDownloadKbps(v),
+                () => self._update_labels(),
+            );
         }
 
         this.sync_ui();
@@ -75,16 +76,12 @@ export class SettingsController {
         const prefs = window.SpolocalQualityPrefs;
         if (!prefs) return;
         const hub = this.state.hub;
-        if (hub.settingsPlaybackSlider) {
-            hub.settingsPlaybackSlider.value = String(prefs.playbackKbps());
-        }
-        if (hub.settingsDownloadSlider) {
-            hub.settingsDownloadSlider.value = String(prefs.downloadKbps());
-        }
-        this._update_slider_labels();
+        prefs.syncTierGroup(hub.settingsPlaybackTiers, prefs.playbackKbps());
+        prefs.syncTierGroup(hub.settingsDownloadTiers, prefs.downloadKbps());
+        this._update_labels();
     }
 
-    _update_slider_labels() {
+    _update_labels() {
         const prefs = window.SpolocalQualityPrefs;
         if (!prefs) return;
         const hub = this.state.hub;

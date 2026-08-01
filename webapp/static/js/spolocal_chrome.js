@@ -142,25 +142,24 @@ document.addEventListener('click', function (e) {
     const atpNewRow = document.getElementById('atp-new-row');
     const atpNewForm = document.getElementById('atp-new-form');
     const atpNewName = document.getElementById('atp-new-name');
-    const atpDownloadSlider = document.getElementById('atp-download-kbps');
+    const atpDownloadTiers = document.getElementById('atp-download-tiers');
     const atpDownloadValue = document.getElementById('atp-download-kbps-value');
 
     function syncAtpQualityUi() {
         const prefs = window.SpolocalQualityPrefs;
         if (!prefs) return;
         const v = prefs.downloadKbps();
-        if (atpDownloadSlider) atpDownloadSlider.value = String(v);
+        prefs.syncTierGroup(atpDownloadTiers, v);
         if (atpDownloadValue) atpDownloadValue.textContent = prefs.formatLabel(v);
     }
 
-    if (atpDownloadSlider) {
-        atpDownloadSlider.addEventListener('input', function () {
-            const prefs = window.SpolocalQualityPrefs;
-            if (!prefs) return;
-            const v = prefs.clampKbps(atpDownloadSlider.value);
-            prefs.setDownloadKbps(v);
-            syncAtpQualityUi();
-        });
+    if (window.SpolocalQualityPrefs && atpDownloadTiers) {
+        window.SpolocalQualityPrefs.bindTierGroup(
+            atpDownloadTiers,
+            () => window.SpolocalQualityPrefs.downloadKbps(),
+            (v) => window.SpolocalQualityPrefs.setDownloadKbps(v),
+            () => syncAtpQualityUi(),
+        );
     }
     syncAtpQualityUi();
 

@@ -110,15 +110,15 @@
         <div id="atp-scroll" class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
             <div id="atp-list-inner" class="flex flex-col"></div>
         </div>
-        <div class="shrink-0 border-t border-[#404040] px-3 py-2 space-y-1">
+        <div class="shrink-0 border-t border-[#404040] px-3 py-2 space-y-1.5">
             <div class="flex items-center justify-between gap-2">
                 <span class="text-[10px] text-[#727272] uppercase tracking-wide">Download quality</span>
-                <span id="atp-download-kbps-value" class="text-[10px] text-[#B3B3B3] tabular-nums">192 kbps</span>
+                <span id="atp-download-kbps-value" class="text-[10px] text-[#B3B3B3] tabular-nums">High (192 kbps)</span>
             </div>
-            <input type="range" id="atp-download-kbps" min="32" max="192" step="8" value="192"
-                   class="w-full accent-[#1DB954] h-1">
-            <div class="flex justify-between text-[9px] text-[#727272]">
-                <span>32</span><span>High</span>
+            <div id="atp-download-tiers" class="quality-tier-group flex gap-1" role="radiogroup" aria-label="Download quality">
+                <button type="button" class="quality-tier-btn flex-1 rounded px-2 py-1 text-[10px] font-semibold" data-kbps="64">Low</button>
+                <button type="button" class="quality-tier-btn flex-1 rounded px-2 py-1 text-[10px] font-semibold" data-kbps="120">Medium</button>
+                <button type="button" class="quality-tier-btn flex-1 rounded px-2 py-1 text-[10px] font-semibold" data-kbps="192">High</button>
             </div>
         </div>
     </div>
@@ -137,25 +137,25 @@
                 <div>
                     <div class="flex items-center justify-between gap-2 mb-1">
                         <h3 class="text-sm font-semibold text-white">Playback quality</h3>
-                        <span id="settings-playback-kbps-value" class="text-xs text-[#1DB954] tabular-nums">192 kbps</span>
+                        <span id="settings-playback-kbps-value" class="text-xs text-[#1DB954] tabular-nums">High (192 kbps)</span>
                     </div>
                     <p class="text-xs text-[#727272] mb-3">MP3 bitrate to play. Missing files download automatically.</p>
-                    <input type="range" id="settings-playback-kbps" min="32" max="192" step="8" value="192"
-                           class="w-full accent-[#1DB954]">
-                    <div class="flex justify-between text-[10px] text-[#727272] mt-1">
-                        <span>32 kbps</span><span>High (192)</span>
+                    <div id="settings-playback-tiers" class="quality-tier-group flex gap-1" role="radiogroup" aria-label="Playback quality">
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="64">Low</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="120">Medium</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="192">High</button>
                     </div>
                 </div>
                 <div>
                     <div class="flex items-center justify-between gap-2 mb-1">
                         <h3 class="text-sm font-semibold text-white">Default download quality</h3>
-                        <span id="settings-download-kbps-value" class="text-xs text-[#1DB954] tabular-nums">192 kbps</span>
+                        <span id="settings-download-kbps-value" class="text-xs text-[#1DB954] tabular-nums">High (192 kbps)</span>
                     </div>
                     <p class="text-xs text-[#727272] mb-3">Used when adding songs from search.</p>
-                    <input type="range" id="settings-download-kbps" min="32" max="192" step="8" value="192"
-                           class="w-full accent-[#1DB954]">
-                    <div class="flex justify-between text-[10px] text-[#727272] mt-1">
-                        <span>32 kbps</span><span>High (192)</span>
+                    <div id="settings-download-tiers" class="quality-tier-group flex gap-1" role="radiogroup" aria-label="Download quality">
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="64">Low</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="120">Medium</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="192">High</button>
                     </div>
                 </div>
             </div>

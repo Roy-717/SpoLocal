@@ -752,3 +752,23 @@ body.mobile-queue-open #sidebar-queue {
         display: inline-flex;
     }
 }
+
+.quality-tier-btn {
+    color: #b3b3b3;
+    background: #3e3e3e;
+    border: 1px solid transparent;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.quality-tier-btn:hover {
+    color: #fff;
+    background: #4a4a4a;
+}
+.quality-tier-btn--active {
+    color: #000;
+    background: #1db954;
+    border-color: #1db954;
+}
+.quality-tier-btn--active:hover {
+    color: #000;
+    background: #1ed760;
+}

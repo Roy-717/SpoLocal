@@ -182,6 +182,8 @@ class DownloadService:
         self._startup_enqueue_done = False
         # track_id -> {title, artist, percent, speed, eta, phase}
         self.progress: Dict[str, dict] = {}
+        # (track_id, quality) jobs already queued or running — avoid duplicate bulk enqueues
+        self._pending_job_keys: set[Tuple[str, str]] = set()
         self._error_rows_cache: Optional[List[dict]] = None
         self._save_timer: Optional[threading.Timer] = None
         self._save_timer_lock = threading.Lock()
@@ -478,6 +480,45 @@ class DownloadService:
                 return t
         return None
 
+    def _clear_stale_variant(self, track: Track, quality: str) -> None:
+        """Drop a variant entry when its file is missing on disk."""
+        qk = variant_key(parse_quality_kbps(quality))
+        rel = (track.media_variants or {}).get(qk)
+        if not rel:
+            return
+        try:
+            exists = (self.root / "downloads" / rel).resolve().is_file()
+        except OSError:
+            exists = False
+        if not exists and track.media_variants:
+            track.media_variants.pop(qk, None)
+
+    def _download_query_for_track(self, track: Track) -> str:
+        """Best download target: Spotify/YouTube URL, known video id, or title search."""
+        url = (track.url or "").strip()
+        if url:
+            return url
+        vid = (track.youtube_video_id or "").strip()
+        if vid:
+            return f"https://www.youtube.com/watch?v={vid}"
+        return f"{track.title} {track.artist}".strip()
+
+    def _youtube_video_id_for_track(self, track: Track) -> str:
+        vid = (track.youtube_video_id or "").strip()
+        if vid:
+            return vid
+        for rel in (track.media_variants or {}).values():
+            if not rel:
+                continue
+            m = re.search(r"\[([^\]]+)\]", Path(rel).name)
+            if m:
+                return m.group(1)
+        if track.media_relpath:
+            m = re.search(r"\[([^\]]+)\]", Path(track.media_relpath).name)
+            if m:
+                return m.group(1)
+        return youtube_video_id_from_url(track.url) or ""
+
     def _track_has_resolved_file(self, track: Track, quality: Optional[str] = None) -> bool:
         variants = track.media_variants or {}
         if quality:
@@ -689,13 +730,15 @@ class DownloadService:
         ytdir = (self.root / "downloads" / "youtube").resolve()
         if not ytdir.is_dir():
             return None
-        vid = (track.youtube_video_id or "").strip()
+        vid = self._youtube_video_id_for_track(track)
+        if not vid:
+            return None
         suffix = f"__{qk}k"
         candidates: List[Path] = []
         for path in ytdir.rglob("*.mp3"):
             if suffix not in path.stem:
                 continue
-            if vid and f"[{vid}]" not in path.name:
+            if f"[{vid}]" not in path.name:
                 continue
             candidates.append(path)
         if not candidates:
@@ -1339,23 +1382,24 @@ class DownloadService:
             self._save_playlists()
             self._enqueue_download(playlist_id.strip(), track.id, quality=q, supplementary=track.status == DownloadStatus.done)
             return True
-        if track.status == DownloadStatus.done and not self._track_has_resolved_file(track, q):
-            self._enqueue_download(playlist_id.strip(), track.id, quality=q, supplementary=True)
+        if not self._track_has_resolved_file(track, q):
+            supplementary = track.status == DownloadStatus.done or self._track_has_resolved_file(track)
+            if supplementary:
+                self._enqueue_download(playlist_id.strip(), track.id, quality=q, supplementary=True)
+                return True
+            st = track.status
+            if st in (DownloadStatus.downloading, DownloadStatus.queued):
+                self._enqueue_download(playlist_id.strip(), track.id, quality=q, supplementary=True)
+                return True
+            if st not in (DownloadStatus.pending, DownloadStatus.error):
+                return False
+            pl.update_track_status(track.id, DownloadStatus.queued, None)
+            self._save_playlists()
+            self._enqueue_download(playlist_id.strip(), track.id, quality=q)
             return True
-        if self._track_has_resolved_file(track):
+        if track.status != DownloadStatus.done:
             pl.update_track_status(track.id, DownloadStatus.done, None)
             self._save_playlists()
-            return True
-        st = track.status
-        if st == DownloadStatus.downloading:
-            return True
-        if st == DownloadStatus.queued:
-            return True
-        if st not in (DownloadStatus.pending, DownloadStatus.error):
-            return False
-        pl.update_track_status(track.id, DownloadStatus.queued, None)
-        self._save_playlists()
-        self._enqueue_download(playlist_id.strip(), track.id, quality=q)
         return True
 
     def delete_track(self, playlist_id: str, track_id: str, *, unlink_media: bool = True) -> bool:
@@ -1410,34 +1454,39 @@ class DownloadService:
 
     def _enqueue_download(self, pl_id: str, track_id: str, *, quality: str = str(DEFAULT_KBPS), supplementary: bool = False) -> None:
         q = variant_key(parse_quality_kbps(quality))
+        job_key = (track_id, q)
+        with self._lock:
+            if job_key in self._pending_job_keys:
+                return
+            self._pending_job_keys.add(job_key)
 
         def job(ytdlp: YtDlpAudioDownloader) -> None:
-            pl = self.get_playlist(pl_id)
-            track = pl.get_track(track_id) if pl else None
-            if not track:
-                return
-
-            if self._track_has_resolved_file(track, q):
-                if not supplementary and track.status != DownloadStatus.done:
-                    pl.update_track_status(track_id, DownloadStatus.done)
-                    self._save_playlists(immediate=False)
-                return
-
-            if not supplementary:
-                pl.update_track_status(track_id, DownloadStatus.downloading)
-
-            hook = self._make_progress_hook(track_id, track.title, track.artist)
-            self.progress[track_id] = {
-                "title": track.title,
-                "artist": track.artist,
-                "percent": None,
-                "speed": None,
-                "eta": None,
-                "phase": "searching",
-                "quality": q,
-            }
-
             try:
+                pl = self.get_playlist(pl_id)
+                track = pl.get_track(track_id) if pl else None
+                if not track:
+                    return
+
+                if self._track_has_resolved_file(track, q):
+                    if not supplementary and track.status != DownloadStatus.done:
+                        pl.update_track_status(track_id, DownloadStatus.done)
+                        self._save_playlists(immediate=False)
+                    return
+
+                if not supplementary:
+                    pl.update_track_status(track_id, DownloadStatus.downloading)
+
+                hook = self._make_progress_hook(track_id, track.title, track.artist)
+                self.progress[track_id] = {
+                    "title": track.title,
+                    "artist": track.artist,
+                    "percent": None,
+                    "speed": None,
+                    "eta": None,
+                    "phase": "searching",
+                    "quality": q,
+                }
+
                 if track.url and "open.spotify.com" in track.url:
                     sub = _sanitize_folder_name(pl.name)
                     out_dir = (self.root / "downloads" / sub)
@@ -1458,8 +1507,12 @@ class DownloadService:
                             track.set_media_variant(q, rel)
                         except ValueError:
                             pass
+                    if not self._track_has_resolved_file(track, q):
+                        rel = self._resolve_variant_relpath(track, q)
+                        if rel:
+                            track.set_media_variant(q, rel)
                 else:
-                    query = track.url or f"{track.title} {track.artist}"
+                    query = self._download_query_for_track(track)
                     yid, out_path = ytdlp.download_from_line(query, progress_hook=hook, quality=q)
                     if yid:
                         track.youtube_video_id = yid
@@ -1474,12 +1527,6 @@ class DownloadService:
                         rel = self._resolve_variant_relpath(track, q)
                         if rel:
                             track.set_media_variant(q, rel)
-                    if not self._track_has_resolved_file(track, q):
-                        logging.getLogger(__name__).warning(
-                            "Supplementary download for %s kbps did not produce a file for track %s",
-                            q,
-                            track_id,
-                        )
 
                 if self._track_has_resolved_file(track, q):
                     self._materialize_lyrics_after_download(track)
@@ -1487,7 +1534,14 @@ class DownloadService:
                     self._invalidate_hydration_cache(pl_id)
                     if not supplementary or track.status != DownloadStatus.done:
                         pl.update_track_status(track_id, DownloadStatus.done)
-                elif not supplementary:
+                elif supplementary:
+                    self._clear_stale_variant(track, q)
+                    logging.getLogger(__name__).warning(
+                        "Supplementary download for %s kbps did not produce a file for track %s",
+                        q,
+                        track_id,
+                    )
+                else:
                     err = (
                         "No YouTube match found. The track may be very obscure or region-locked on YouTube."
                         if track.url and "open.spotify.com" in track.url
@@ -1497,14 +1551,18 @@ class DownloadService:
 
             except Exception as exc:
                 if supplementary:
+                    if track:
+                        self._clear_stale_variant(track, q)
                     logging.getLogger(__name__).exception(
                         "Supplementary download failed for track %s at %s kbps",
                         track_id,
                         q,
                     )
-                else:
+                elif pl:
                     pl.update_track_status(track_id, DownloadStatus.error, str(exc))
             finally:
+                with self._lock:
+                    self._pending_job_keys.discard(job_key)
                 self.progress.pop(track_id, None)
                 try:
                     delay = float(
@@ -1518,6 +1576,6 @@ class DownloadService:
                     delay = 0.0
                 if delay > 0:
                     time.sleep(delay)
-            self._save_playlists(immediate=False)
+                self._save_playlists(immediate=False)
 
         self.job_queue.put(job)

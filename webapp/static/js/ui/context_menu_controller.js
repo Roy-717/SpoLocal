@@ -274,6 +274,16 @@ export class PlaylistContextMenuController {
                     f.submit();
                 }, false);
             }
+            if (playSrcTrim) {
+                mkBtn('Save to computer', () => {
+                    const a = document.createElement('a');
+                    a.href = '/playlists/' + encodeURIComponent(payload.playlistId) + '/tracks/' + encodeURIComponent(payload.trackId) + '/file';
+                    a.setAttribute('download', '');
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                }, false);
+            }
             mkBtn('Song info', () => {
                 if (this.trackInfo) {
                     this.trackInfo.open(String(payload.playlistId), String(payload.trackId));
@@ -324,6 +334,14 @@ export class PlaylistContextMenuController {
                     }
                 }, false);
             });
+            mkBtn('Save to computer (ZIP)', () => {
+                const a = document.createElement('a');
+                a.href = '/playlists/' + encodeURIComponent(payload.playlistId) + '/export.zip';
+                a.setAttribute('download', '');
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            }, false);
             mkBtn('Delete playlist', () => {
                 const n = payload.playlistName || 'this playlist';
                 if (!confirm('Delete playlist "' + n + '"? Files on disk are not removed.')) return;

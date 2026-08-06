@@ -10,8 +10,10 @@ import os
 import queue
 import re
 import sys
+import tempfile
 import threading
 import time
+import zipfile
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -646,6 +648,70 @@ class DownloadService:
         except (OSError, ValueError):
             pass
         return None
+
+    @staticmethod
+    def export_filename_for_track(track: Track, audio_path: Path) -> str:
+        """Human-readable attachment name: Artist - Title.ext."""
+        artist = _sanitize_folder_name((track.artist or "").strip()) or "Unknown"
+        title = _sanitize_folder_name((track.title or "").strip()) or "Track"
+        stem = f"{artist} - {title}"
+        if len(stem) > 180:
+            stem = stem[:180].rstrip(". ")
+        suffix = audio_path.suffix.lower() or ".mp3"
+        return stem + suffix
+
+    def get_track_export(self, playlist_id: str, track_id: str) -> Optional[Tuple[Path, str]]:
+        """Audio path plus browser download filename, or None if missing."""
+        pl = self.get_playlist(playlist_id.strip())
+        if not pl:
+            return None
+        track = pl.get_track(track_id.strip())
+        if not track:
+            return None
+        path = self.get_track_audio_path(playlist_id, track_id)
+        if not path:
+            return None
+        return path, self.export_filename_for_track(track, path)
+
+    def build_playlist_export_zip(self, playlist_id: str) -> Optional[Tuple[Path, str, int]]:
+        """Zip downloaded tracks. Returns (temp_zip, zip_name, file_count) or None if playlist missing."""
+        pl = self.get_playlist(playlist_id.strip())
+        if not pl:
+            return None
+        self.hydrate_media_paths(pl, persist=False)
+        entries: List[Tuple[Path, str]] = []
+        used_names: Dict[str, int] = {}
+        for track in pl.tracks:
+            path = self.get_track_audio_path(pl.id, track.id)
+            if not path:
+                continue
+            name = self.export_filename_for_track(track, path)
+            key = name.lower()
+            n = used_names.get(key, 0)
+            used_names[key] = n + 1
+            if n:
+                stem = Path(name).stem
+                suffix = Path(name).suffix
+                name = f"{stem} ({n + 1}){suffix}"
+            entries.append((path, name))
+        if not entries:
+            return None
+        pl_name = _sanitize_folder_name(pl.name) or "playlist"
+        zip_name = f"{pl_name}.zip"
+        fd, tmp_name = tempfile.mkstemp(suffix=".zip", prefix="spolocal_export_")
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        try:
+            with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for path, name in entries:
+                    zf.write(path, arcname=name)
+        except Exception:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        return tmp_path, zip_name, len(entries)
 
     def get_track_info(self, playlist_id: str, track_id: str) -> Optional[dict]:
         pl = self.get_playlist(playlist_id.strip())

@@ -2,7 +2,7 @@
 
 ## Overview
 
-SpoLocal is a local Spotify downloader web app. Users search/download tracks by Spotify URL, YouTube URL, or plain title/artist. It imports Spotify playlists, creates manual playlists, and saves downloads into playlist-named folders.
+SpoLocal is a local Spotify downloader web app. Users search/download tracks by Spotify URL, YouTube URL, or plain title/artist. It imports Spotify playlists, creates manual playlists, and saves downloads into playlist-named folders. Right-click a track → **Save to computer**; right-click a playlist → **Save to computer (ZIP)** to export files to the browser downloads folder.
 
 **Tech stack**: FastAPI + Tailwind CSS (JIT) + vanilla JS modules. SpotDL alternative. No external API keys needed.
 

@@ -26,6 +26,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.templating import Jinja2Templates
+from starlette.background import BackgroundTask
 from starlette.datastructures import Headers
 from starlette.staticfiles import NotModifiedResponse, StaticFiles
 
@@ -915,6 +916,54 @@ async def api_retry_all_errors():
     """Re-queue all tracks that are in error state (any playlist)."""
     n = service.retry_all_error_tracks()
     return JSONResponse({"ok": True, "queued": n})
+
+
+def _unlink_quiet(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+@app.get("/playlists/{playlist_id}/tracks/{track_id}/file")
+async def export_track_file(playlist_id: str, track_id: str):
+    """Browser download of one track's audio file."""
+    result = await asyncio.to_thread(service.get_track_export, playlist_id, track_id)
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail="Track audio not found. Download the track in the library first.",
+        )
+    path, filename = result
+    return FileResponse(
+        path,
+        media_type=_media_content_type(path),
+        filename=filename,
+        content_disposition_type="attachment",
+    )
+
+
+@app.get("/playlists/{playlist_id}/export.zip")
+async def export_playlist_zip(playlist_id: str):
+    """Browser download of a ZIP of all downloaded tracks in the playlist."""
+    pid = playlist_id.strip()
+    if not service.get_playlist(pid):
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    built = await asyncio.to_thread(service.build_playlist_export_zip, pid)
+    if not built:
+        raise HTTPException(
+            status_code=404,
+            detail="No downloaded tracks to export. Download songs in this playlist first.",
+        )
+    tmp_path, zip_name, _count = built
+    return FileResponse(
+        tmp_path,
+        media_type="application/zip",
+        filename=zip_name,
+        content_disposition_type="attachment",
+        background=BackgroundTask(_unlink_quiet, tmp_path),
+    )
 
 
 class QualityDownloadBody(BaseModel):

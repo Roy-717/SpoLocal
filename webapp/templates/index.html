@@ -159,6 +159,17 @@
                     </div>
                 </div>
                 <div class="settings-section">
+                    <div class="flex items-center justify-between gap-3">
+                        <div>
+                            <h3 class="text-sm font-semibold text-white">Normalize loudness</h3>
+                            <p class="text-xs text-[#727272] mt-1">Match perceived volume across tracks.</p>
+                        </div>
+                        <label class="flex items-center shrink-0 cursor-pointer">
+                            <input type="checkbox" id="settings-normalize-loudness" class="rounded border-[#535353] bg-[#3E3E3E] text-[#1DB954] focus:ring-[#1DB954]">
+                        </label>
+                    </div>
+                </div>
+                <div class="settings-section">
                     <h3 class="text-sm font-semibold text-white mb-1">Download library</h3>
                     <p class="text-xs text-[#727272] mb-3">Queue missing files for every playlist at a chosen quality.</p>
                     <div id="settings-library-download-tiers" class="quality-tier-group flex gap-1">
@@ -506,6 +517,7 @@
     <script type="application/json" id="playlist-json">{{ current_tracks_payload | default([], true) | tojson | safe }}</script>
     <script type="application/json" id="spolocal-player-boot">{{ {"playlistId": current.id if current else none, "isHome": is_home|default(false), "libraryPool": home_library_pool|default([], true), "catalog": playlist_catalog|default([], true)} | tojson | safe }}</script>
     <script src="/static/js/audio_quality_prefs.js"></script>
+    <script src="/static/js/audio_normalization_prefs.js"></script>
     <script type="module" src="/static/js/PlaylistSession.mjs"></script>
     <script type="module" src="/static/pwa/pwa-entry.js"></script>
     <script src="/static/js/spolocal_chrome.js" defer></script>

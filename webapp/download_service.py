@@ -122,6 +122,7 @@ def _track_from_dict(raw: dict) -> Track:
     data.setdefault("cover_url", None)
     data.setdefault("youtube_video_id", None)
     data.setdefault("album", None)
+    data.setdefault("loudness_gain_db", None)
     data.setdefault("liked_source_playlist_id", None)
     data.setdefault("liked_source_track_id", None)
     return Track(**data)
@@ -284,6 +285,7 @@ class DownloadService:
                             "cover_url": t.cover_url,
                             "youtube_video_id": t.youtube_video_id,
                             "album": t.album,
+                            "loudness_gain_db": t.loudness_gain_db,
                             "liked_source_playlist_id": t.liked_source_playlist_id,
                             "liked_source_track_id": t.liked_source_track_id,
                         }
@@ -712,6 +714,33 @@ class DownloadService:
                 pass
             raise
         return tmp_path, zip_name, len(entries)
+
+    def _analyze_track_loudness(self, playlist_id: str, track: Track) -> None:
+        if track.loudness_gain_db is not None:
+            return
+        path = self.get_track_audio_path(playlist_id, track.id)
+        if not path:
+            return
+        from loudness_analysis import analyze_loudness_gain_db
+
+        gain = analyze_loudness_gain_db(path, self.root)
+        if gain is not None:
+            track.loudness_gain_db = gain
+
+    def ensure_track_loudness_gain(self, playlist_id: str, track_id: str) -> Optional[float]:
+        pl = self.get_playlist(playlist_id.strip())
+        if not pl:
+            return None
+        track = pl.get_track(track_id.strip())
+        if not track:
+            return None
+        if track.loudness_gain_db is not None:
+            return track.loudness_gain_db
+        self.hydrate_media_paths(pl, persist=False)
+        self._analyze_track_loudness(pl.id, track)
+        if track.loudness_gain_db is not None:
+            self._save_playlists(immediate=False)
+        return track.loudness_gain_db
 
     def get_track_info(self, playlist_id: str, track_id: str) -> Optional[dict]:
         pl = self.get_playlist(playlist_id.strip())
@@ -1675,6 +1704,7 @@ class DownloadService:
 
                 if self._track_has_resolved_file(track, q):
                     self._materialize_lyrics_after_download(track)
+                    self._analyze_track_loudness(pl_id, track)
                     self._preemptive_cover_tile_generation(pl_id, track_id)
                     self._invalidate_hydration_cache(pl_id)
                     if not supplementary or track.status != DownloadStatus.done:

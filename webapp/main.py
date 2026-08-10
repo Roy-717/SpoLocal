@@ -320,6 +320,7 @@ def _track_payload_row(t: Track, *, playback_quality: Optional[str] = None) -> d
         "url": t.url or "",
         "youtube_video_id": t.youtube_video_id or "",
         "error": t.error or "",
+        "loudness_gain_db": t.loudness_gain_db,
     }
 
 
@@ -453,6 +454,16 @@ async def api_track_info(playlist_id: str, track_id: str):
     if not info:
         raise HTTPException(status_code=404, detail="Track not found")
     return JSONResponse(info)
+
+
+@app.get("/api/playlists/{playlist_id}/tracks/{track_id}/loudness-gain")
+async def api_track_loudness_gain(playlist_id: str, track_id: str):
+    gain = await asyncio.to_thread(service.ensure_track_loudness_gain, playlist_id, track_id)
+    if gain is None:
+        pl = service.get_playlist(playlist_id.strip())
+        if not pl or not pl.get_track(track_id.strip()):
+            raise HTTPException(status_code=404, detail="Track not found")
+    return JSONResponse({"loudness_gain_db": gain})
 
 
 @app.get("/api/playlist/state")

@@ -133,7 +133,6 @@ document.addEventListener('click', function (e) {
     const gPageLabel = document.getElementById('global-page-label');
     const gClose = document.getElementById('global-search-close');
     const previewAudio = document.getElementById('song-preview-audio');
-    const streamBadge = document.getElementById('player-stream-badge');
 
     const atpPop = document.getElementById('add-to-playlist-popover');
     const atpFilter = document.getElementById('atp-filter');
@@ -298,6 +297,10 @@ document.addEventListener('click', function (e) {
             b.innerHTML = '<i class="fa-solid fa-play text-black text-sm pl-0.5"></i>';
             b.classList.remove('ring-2', 'ring-white', 'scale-105');
         });
+        const hub = window.SpolocalPlayerHub;
+        if (hub && typeof hub.setPlayUi === 'function') {
+            hub.setPlayUi(!!(hub.audio && !hub.audio.paused));
+        }
     }
 
     function playPreview(hit, btn) {
@@ -323,13 +326,7 @@ document.addEventListener('click', function (e) {
             hub.currentTrackId = vid;
             hub.titleEl && (hub.titleEl.textContent = hit.title || '');
             hub.subEl && (hub.subEl.textContent = (hit.artist || hit.channel || ''));
-            // Show stream indicator
-            const streamBadge = hub.streamBadgeEl;
-            if (streamBadge) {
-                streamBadge.classList.remove('hidden');
-                streamBadge.textContent = 'Ⓢ';
-                streamBadge.title = 'Stream';
-            }
+            if (typeof hub.setPlayUi === 'function') hub.setPlayUi(true);
             if (hub.queueVisible && hub.queue) hub.queue.render_queue_list();
             return;
         }

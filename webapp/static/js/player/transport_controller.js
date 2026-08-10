@@ -36,6 +36,8 @@ export class PlaylistTransportController {
 
         this.loadTransportPrefs();
         if (typeof this.load_volume_pref === 'function') this.load_volume_pref();
+        const norm = hub.audioNormalization;
+        if (norm) norm.wire();
 
         // Seek wiring
         if (hub.seek) {
@@ -54,7 +56,9 @@ export class PlaylistTransportController {
         if (hub.volumeEl) {
             hub.volumeEl.addEventListener('input', () => {
                 const v = parseFloat(hub.volumeEl.value) / 100;
-                hub.audio.volume = v;
+                const norm = hub.audioNormalization;
+                if (norm) norm.set_user_volume(v);
+                else hub.audio.volume = v;
                 this.update_volume_icon();
                 this.persist_volume();
             });
@@ -234,12 +238,14 @@ export class PlaylistTransportController {
 
     load_volume_pref() {
         const hub = this.state.hub;
+        const norm = hub.audioNormalization;
         try {
             const s = localStorage.getItem(hub.LS_VOLUME);
             if (s != null && hub.volumeEl) {
                 const n = Math.max(0, Math.min(1, parseFloat(s)));
                 if (Number.isFinite(n)) {
-                    hub.audio.volume = n;
+                    if (norm) norm.set_user_volume(n);
+                    else hub.audio.volume = n;
                     hub.volumeEl.value = String(Math.round(n * 100));
                 }
             }
@@ -248,13 +254,17 @@ export class PlaylistTransportController {
     }
 
     persist_volume() {
-        try { localStorage.setItem(this.state.hub.LS_VOLUME, String(this.state.hub.audio.volume)); } catch (e) {}
+        const hub = this.state.hub;
+        const norm = hub.audioNormalization;
+        const v = norm ? norm.get_user_volume() : hub.audio.volume;
+        try { localStorage.setItem(hub.LS_VOLUME, String(v)); } catch (e) {}
     }
 
     update_volume_icon() {
         const hub = this.state.hub;
         if (!hub.volumeIconEl) return;
-        const v = hub.audio.volume;
+        const norm = hub.audioNormalization;
+        const v = norm ? norm.get_user_volume() : hub.audio.volume;
         hub.volumeIconEl.className =
             'fa-solid text-xs shrink-0 w-4 text-center ' +
             (v === 0 ? 'fa-volume-xmark' : v < 0.45 ? 'fa-volume-low' : 'fa-volume-high');
@@ -453,6 +463,7 @@ export class PlaylistTransportController {
         hub.audio.src = playSrc;
         hub.titleEl.textContent = t.title || entry.title || '—';
         hub.subEl.textContent = t.artist || entry.artist || '—';
+        void this.apply_track_loudness(t, playlistId);
         if (this.lyrics) this.lyrics.loadCover(trackId, playlistId);
         this.updatePlayingRow();
         hub.audio.play().catch((err) => this.handlePlayError(err));
@@ -981,6 +992,23 @@ export class PlaylistTransportController {
         }
     }
 
+    isStreamingPlayback() {
+        const hub = this.state.hub;
+        if (!hub || !hub.audio) return false;
+        const raw_src = String(hub.audio.currentSrc || hub.audio.src || '').trim();
+        if (!raw_src) return false;
+        const prefs = window.SpolocalQualityPrefs;
+        if (prefs && prefs.normalizeMediaPath(raw_src)) return false;
+        try {
+            const u = new URL(raw_src, window.location.href);
+            if (u.pathname.startsWith('/media/')) return false;
+            if (u.pathname.startsWith('/api/preview')) return true;
+            return u.origin !== window.location.origin;
+        } catch (e) {
+            return false;
+        }
+    }
+
     setPlayUi(playing) {
         const hub = this.state.hub;
         document.querySelectorAll('.track-play i').forEach(icon => {
@@ -1017,7 +1045,7 @@ export class PlaylistTransportController {
         }
         const streamBadge = hub.streamBadgeEl;
         if (streamBadge) {
-            const isStream = playing && hub.currentTrackId && hub.currentTrackId !== hub.resolveCurrentPlaySrc();
+            const isStream = playing && this.isStreamingPlayback();
             if (isStream) {
                 streamBadge.classList.remove('hidden');
                 streamBadge.style.opacity = '1';
@@ -1119,6 +1147,7 @@ export class PlaylistTransportController {
                     title: track_payload.title,
                     artist: track_payload.artist,
                     album: track_payload.album,
+                    loudness_gain_db: track_payload.loudness_gain_db,
                 });
             }
         }
@@ -1216,6 +1245,7 @@ export class PlaylistTransportController {
         const resume_time = Math.max(0, hub.audio.currentTime || 0);
         hub.audio.pause();
         hub.audio.src = desired;
+        void this.apply_track_loudness(t, pid);
         const on_ready = () => {
             if (resume_time > 0.25 && hub.audio.duration && resume_time < hub.audio.duration - 0.35) {
                 try { hub.audio.currentTime = resume_time; } catch (e) { /* ignore */ }
@@ -1307,6 +1337,7 @@ export class PlaylistTransportController {
         hub.audio.src = playSrc;
         hub.titleEl.textContent = t.title;
         hub.subEl.textContent = t.artist;
+        void this.apply_track_loudness(t, sourcePidFinal);
         if (this.lyrics) this.lyrics.loadCover(trackId);
         this.updatePlayingRow();
         try {
@@ -1347,6 +1378,9 @@ export class PlaylistTransportController {
         hub.audio.removeAttribute('src');
         hub.audio.load();
         hub.audio.src = src;
+        const t = this.findTrackInHub(hub.currentTrackId);
+        const pid = hub.playingPlaylistId || hub.playlistId;
+        if (t && pid) void this.apply_track_loudness(t, pid);
         const onReady = () => {
             if (resumeTime > 0.25 && hub.audio.duration && resumeTime < hub.audio.duration - 0.35) {
                 try {
@@ -1363,6 +1397,33 @@ export class PlaylistTransportController {
             hub.audio.addEventListener('canplay', onReady, { once: true });
         }
         return true;
+    }
+
+    async apply_track_loudness(track, playlist_id) {
+        const hub = this.state.hub;
+        const norm = hub.audioNormalization;
+        if (!norm) return;
+        norm.wire();
+        let db = track && track.loudness_gain_db;
+        const pid = String(playlist_id || '').trim();
+        const tid = track && track.id ? String(track.id).trim() : '';
+        if (db == null && pid && tid) {
+            try {
+                const r = await fetch(
+                    '/api/playlists/' + encodeURIComponent(pid) + '/tracks/' + encodeURIComponent(tid) + '/loudness-gain',
+                    { credentials: 'same-origin' },
+                );
+                if (r.ok) {
+                    const j = await r.json();
+                    db = j.loudness_gain_db;
+                    if (db != null) {
+                        track.loudness_gain_db = db;
+                        this.patchTrackInHub({ id: tid, loudness_gain_db: db });
+                    }
+                }
+            } catch (e) {}
+        }
+        norm.set_track_gain_db(db != null ? db : 0);
     }
 
     handleAudioElementError() {

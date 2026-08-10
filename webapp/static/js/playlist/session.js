@@ -8,6 +8,7 @@ import { PlaylistColumnResizer } from '../ui/column_resizer.js';
 import { PlaylistHomeViewController } from './home_view_controller.js';
 import { SettingsController } from '../ui/settings_controller.js';
 import { TrackInfoController } from '../ui/track_info_controller.js';
+import { AudioNormalizationController } from '../player/audio_normalization_controller.js';
 
 /**
  * Main orchestrator for the playlist page session.
@@ -200,6 +201,7 @@ export class PlaylistSessionController {
         });
 
         hub.audio = document.getElementById('player-audio');
+        hub.audioNormalization = hub.audio ? new AudioNormalizationController(hub.audio) : null;
         hub.seek = document.getElementById('player-seek');
         hub.volumeEl = document.getElementById('player-volume');
         hub.volumeIconEl = document.getElementById('player-volume-icon');
@@ -337,6 +339,12 @@ export class PlaylistSessionController {
 
     applySpaPlaylist(data) {
         const hub = this.state.hub;
+        const same_playlist = data.playlist_id === hub.playlistId;
+        let saved_scroll_top = 0;
+        if (same_playlist) {
+            const scroll_root = document.getElementById('playlist-scroll-root');
+            if (scroll_root) saved_scroll_top = scroll_root.scrollTop;
+        }
         hub.isHomeView = false;
         hub.playlistId = data.playlist_id;
         try { window.__spaPlaylistId = hub.playlistId; } catch (e) {}
@@ -368,6 +376,14 @@ export class PlaylistSessionController {
             window.loadPlaylistRecommendations(hub.playlistId);
         }
         if (typeof window.syncPlaylistEditModalFromFragment === 'function') window.syncPlaylistEditModalFromFragment();
+
+        if (same_playlist && saved_scroll_top > 0) {
+            const restore_scroll = () => {
+                const scroll_root = document.getElementById('playlist-scroll-root');
+                if (scroll_root) scroll_root.scrollTop = saved_scroll_top;
+            };
+            requestAnimationFrame(() => requestAnimationFrame(restore_scroll));
+        }
 
         void this.transport.refresh_liked_keys_from_server().then(() => {
             this.transport.update_like_button_ui();
@@ -513,6 +529,7 @@ export class PlaylistSessionController {
         if (!play_src) return;
 
         hub.audio.src = play_src;
+        void this.transport.apply_track_loudness(t, pls);
         hub.titleEl.textContent = t.title;
         hub.subEl.textContent = t.artist;
         if (typeof window.loadCover === 'function') window.loadCover(trs);

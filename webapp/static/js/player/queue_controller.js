@@ -222,6 +222,12 @@ export class PlaylistQueueController {
         hub.audio.src = e.play_src;
         hub.titleEl.textContent = e.title || '—';
         hub.subEl.textContent = e.artist || '—';
+        if (this.transport) {
+            void this.transport.apply_track_loudness({
+                id: e.track_id,
+                loudness_gain_db: e.loudness_gain_db,
+            }, e.source_playlist_id);
+        }
         if (this.lyrics) this.lyrics.loadCover(e.track_id, e.source_playlist_id);
         if (this.transport) this.transport.updatePlayingRow();
         hub.audio.play().catch(err => { if (this.transport) this.transport.handlePlayError(err); });

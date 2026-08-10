@@ -27,6 +27,7 @@ export class SettingsController {
         hub.settingsDownloadTiers = document.getElementById('settings-download-tiers');
         hub.settingsDownloadValue = document.getElementById('settings-download-kbps-value');
         hub.settingsLibraryDownloadTiers = document.getElementById('settings-library-download-tiers');
+        hub.settingsNormalizeLoudness = document.getElementById('settings-normalize-loudness');
 
         if (hub.settingsOpenBtn) {
             hub.settingsOpenBtn.addEventListener('click', () => this.open());
@@ -83,6 +84,15 @@ export class SettingsController {
             });
         }
 
+        const norm_prefs = window.SpolocalNormalizationPrefs;
+        if (norm_prefs && hub.settingsNormalizeLoudness) {
+            hub.settingsNormalizeLoudness.addEventListener('change', () => {
+                norm_prefs.setEnabled(hub.settingsNormalizeLoudness.checked);
+                const norm = hub.audioNormalization;
+                if (norm) norm.set_enabled(hub.settingsNormalizeLoudness.checked);
+            });
+        }
+
         this.sync_ui();
     }
 
@@ -117,6 +127,10 @@ export class SettingsController {
         }
         if (hub.settingsDownloadValue) {
             hub.settingsDownloadValue.textContent = prefs.formatLabel(prefs.downloadKbps());
+        }
+        const norm_prefs = window.SpolocalNormalizationPrefs;
+        if (norm_prefs && hub.settingsNormalizeLoudness) {
+            hub.settingsNormalizeLoudness.checked = norm_prefs.enabled();
         }
     }
 }

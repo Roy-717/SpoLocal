@@ -49,6 +49,8 @@ class Track:
     cover_url: Optional[str] = None
     youtube_video_id: Optional[str] = None
     album: Optional[str] = None
+    # Playback gain in dB to normalize perceived loudness (negative = quieter).
+    loudness_gain_db: Optional[float] = None
     # When this row lives in the Liked Songs playlist, references the original list + track id.
     liked_source_playlist_id: Optional[str] = None
     liked_source_track_id: Optional[str] = None

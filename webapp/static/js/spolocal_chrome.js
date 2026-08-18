@@ -298,8 +298,27 @@ document.addEventListener('click', function (e) {
             b.classList.remove('ring-2', 'ring-white', 'scale-105');
         });
         const hub = window.SpolocalPlayerHub;
+        if (hub) {
+            hub.searchStreamActive = false;
+            hub.searchStreamHit = null;
+            if (hub.audio) {
+                hub.audio.pause();
+                hub.audio.removeAttribute('src');
+                hub.audio.load();
+            }
+            if (hub.currentTrackId && hub.titleEl) {
+                let t = (hub.tracks || []).find((x) => x.id === hub.currentTrackId);
+                if (!t && hub.playingTracks) {
+                    t = hub.playingTracks.find((x) => x.id === hub.currentTrackId);
+                }
+                if (t) {
+                    hub.titleEl.textContent = t.title || '';
+                    if (hub.subEl) hub.subEl.textContent = t.artist || '';
+                }
+            }
+        }
         if (hub && typeof hub.setPlayUi === 'function') {
-            hub.setPlayUi(!!(hub.audio && !hub.audio.paused));
+            hub.setPlayUi(false);
         }
     }
 
@@ -317,14 +336,17 @@ document.addEventListener('click', function (e) {
         btn.classList.add('ring-2', 'ring-white', 'scale-105');
         const hub = window.SpolocalPlayerHub;
         if (hub && hub.audio) {
+            hub.searchStreamActive = true;
+            hub.searchStreamHit = hit;
+            hub._mediaDecodeRetries = 0;
+            hub.audio.pause();
             hub.audio.src = streamSrcForVideoId(vid);
             hub.audio.load();
-            hub.audio.play().catch(() => {
-                hub.audio.pause();
-            });
-            hub.currentTrackId = vid;
             hub.titleEl && (hub.titleEl.textContent = hit.title || '');
             hub.subEl && (hub.subEl.textContent = (hit.artist || hit.channel || ''));
+            hub.audio.play().catch(() => {
+                stopPreview();
+            });
             if (typeof hub.setPlayUi === 'function') hub.setPlayUi(true);
             if (hub.queueVisible && hub.queue) hub.queue.render_queue_list();
             return;
@@ -340,6 +362,7 @@ document.addEventListener('click', function (e) {
         previewAudio.addEventListener('ended', stopPreview);
         previewAudio.addEventListener('error', stopPreview);
     }
+    window.stopSearchStream = stopPreview;
 
     function closeAddToPlaylistPopover() {
         pendingAddHit = null;

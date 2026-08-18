@@ -990,6 +990,11 @@ export class PlaylistTransportController {
         }
     }
 
+    isSearchStreamPlayback() {
+        const hub = this.state.hub;
+        return !!(hub && hub.searchStreamActive);
+    }
+
     isStreamingPlayback() {
         const hub = this.state.hub;
         if (!hub || !hub.audio) return false;
@@ -1370,6 +1375,7 @@ export class PlaylistTransportController {
 
     trySoftReloadCurrentAudioSource() {
         const hub = this.state.hub;
+        if (this.isSearchStreamPlayback()) return false;
         const src = this.resolveCurrentPlaySrc();
         if (!src || !hub.currentTrackId) return false;
         hub._mediaDecodeRetries = (hub._mediaDecodeRetries || 0) + 1;
@@ -1439,6 +1445,19 @@ export class PlaylistTransportController {
 
     handleAudioElementError() {
         const hub = this.state.hub;
+        if (this.isSearchStreamPlayback()) {
+            this.setPlayUi(false);
+            if (typeof window.stopSearchStream === 'function') {
+                window.stopSearchStream();
+            } else {
+                hub.searchStreamActive = false;
+            }
+            return;
+        }
+        if (this.isStreamingPlayback()) {
+            this.setPlayUi(false);
+            return;
+        }
         const err = hub.audio.error;
         const unsupported = err && (err.code === 4 || (typeof MediaError !== 'undefined' && err.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED));
         if (unsupported) {
@@ -1453,6 +1472,7 @@ export class PlaylistTransportController {
 
     scheduleStallRecoveryIfStillHung() {
         const hub = this.state.hub;
+        if (this.isSearchStreamPlayback()) return;
         if (this.stallRecoveryTimer) clearTimeout(this.stallRecoveryTimer);
         this.stallRecoveryTimer = setTimeout(() => {
             this.stallRecoveryTimer = null;

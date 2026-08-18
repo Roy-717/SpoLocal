@@ -5,9 +5,10 @@ Coordinates the download, metadata, and model layers to serve each request."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 import time
 import mimetypes
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 import asyncio
@@ -192,6 +193,92 @@ def _recommendation_cache_cleanup(now: float) -> None:
         _recommendation_cache.pop(k, None)
 
 
+def _stream_play_src_for_video_id(video_id: str) -> str:
+    return "/api/stream?vid=" + quote(video_id.strip(), safe="")
+
+
+def _stream_play_src_for_track(t: Track) -> Optional[str]:
+    vid = (t.youtube_video_id or "").strip() or youtube_video_id_from_url(t.url)
+    if not vid:
+        return None
+    return _stream_play_src_for_video_id(vid)
+
+
+def _resolve_track_play_src(t: Track, *, playback_quality: Optional[str] = None) -> Optional[str]:
+    variants = track_play_variants(t)
+    preferred = playback_quality or "192"
+    play_src = variants.get(preferred) or variants.get("192") or t.play_src()
+    if not play_src and variants:
+        best_key = sorted(variants.keys(), key=lambda k: int(k) if str(k).isdigit() else 0, reverse=True)[0]
+        play_src = variants.get(best_key)
+    if not play_src:
+        play_src = _stream_play_src_for_track(t)
+    return play_src
+
+
+def _ytdlp_audio_cmd(video_id: str, *, max_seconds: Optional[int] = None) -> list[str]:
+    cmd = [
+        "yt-dlp",
+        "-f",
+        "bestaudio/best",
+        "-o",
+        "-",
+        "--no-playlist",
+        "--quiet",
+        "--no-warnings",
+    ]
+    if max_seconds is not None:
+        cmd.extend(["--download-sections", f"*0-{max_seconds}", "--force-keyframes-at-cuts"])
+    cmd.append(f"https://www.youtube.com/watch?v={video_id}")
+    return cmd
+
+
+async def _open_ytdlp_audio_process(video_id: str, *, max_seconds: Optional[int] = None) -> asyncio.subprocess.Process:
+    return await asyncio.create_subprocess_exec(
+        *_ytdlp_audio_cmd(video_id, max_seconds=max_seconds),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+
+async def _stream_ytdlp_audio_or_502(video_id: str, *, max_bytes: Optional[int] = None) -> AsyncIterator[bytes]:
+    max_seconds = 30 if max_bytes is not None else None
+    proc = await _open_ytdlp_audio_process(video_id, max_seconds=max_seconds)
+    sent_bytes = 0
+    sent_any = False
+    try:
+        if proc.stdout is None:
+            raise HTTPException(status_code=502, detail="Could not stream audio")
+        while True:
+            chunk = await proc.stdout.read(65536)
+            if not chunk:
+                break
+            if max_bytes is not None:
+                remaining = max_bytes - sent_bytes
+                if remaining <= 0:
+                    break
+                if len(chunk) > remaining:
+                    chunk = chunk[:remaining]
+            sent_bytes += len(chunk)
+            sent_any = True
+            yield chunk
+            if max_bytes is not None and sent_bytes >= max_bytes:
+                break
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+        rc = await proc.wait()
+        if not sent_any:
+            detail = "Could not stream audio"
+            if proc.stderr is not None:
+                err = (await proc.stderr.read()).decode(errors="replace").strip()
+                if err:
+                    detail = err.splitlines()[-1][:240]
+            raise HTTPException(status_code=502, detail=detail) from None
+        if rc not in (0, None) and not sent_any:
+            raise HTTPException(status_code=502, detail=f"Audio stream failed ({rc})")
+
+
 def _extract_preview_payload(video_id: str) -> tuple[str, dict[str, str], str]:
     url_yt = f"https://www.youtube.com/watch?v={video_id}"
     opts = {
@@ -304,17 +391,15 @@ _COVER_JPEG_QUALITY = DEFAULT_JPEG_QUALITY
 def _track_payload_row(t: Track, *, playback_quality: Optional[str] = None) -> dict[str, Any]:
     st = t.status.value if hasattr(t.status, "value") else str(t.status)
     variants = track_play_variants(t)
-    preferred = playback_quality or "192"
-    play_src = variants.get(preferred) or variants.get("192") or t.play_src()
-    if not play_src and variants:
-        best_key = sorted(variants.keys(), key=lambda k: int(k) if str(k).isdigit() else 0, reverse=True)[0]
-        play_src = variants.get(best_key)
+    play_src = _resolve_track_play_src(t, playback_quality=playback_quality)
+    stream_src = _stream_play_src_for_track(t)
     return {
         "id": t.id,
         "title": t.title,
         "artist": t.artist,
         "album": t.album or "",
         "play_src": play_src,
+        "stream_src": stream_src,
         "play_variants": variants,
         "status": st,
         "url": t.url or "",
@@ -351,10 +436,7 @@ def _library_pool_payload() -> list[dict[str, Any]]:
     for pl in service.list_playlists():
         for t in pl.tracks:
             variants = track_play_variants(t)
-            src = variants.get("192") or t.play_src()
-            if not src and variants:
-                best_key = sorted(variants.keys(), key=lambda k: int(k) if str(k).isdigit() else 0, reverse=True)[0]
-                src = variants.get(best_key)
+            src = _resolve_track_play_src(t)
             if not src:
                 continue
             pool.append(
@@ -638,29 +720,26 @@ async def api_preview(vid: str):
     if not vid or not vid.replace("-", "").replace("_", "").isalnum():
         raise HTTPException(status_code=400, detail="Invalid video id")
 
-    try:
-        stream_url, http_headers, ext = await _get_preview_payload(vid.strip())
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Could not resolve audio stream: {exc}")
-
-    content_type = (
-        "audio/webm" if ext == "webm"
-        else "audio/mp4" if ext in ("m4a", "mp4")
-        else "audio/mpeg"
-    )
     MAX_BYTES = 512 * 1024  # ~30 s at 128 kbps
 
-    async def generate():
-        async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
-            async with client.stream("GET", stream_url, headers=http_headers) as resp:
-                sent = 0
-                async for chunk in resp.aiter_bytes(8192):
-                    if sent >= MAX_BYTES:
-                        break
-                    sent += len(chunk)
-                    yield chunk
+    async def generate() -> AsyncIterator[bytes]:
+        async for chunk in _stream_ytdlp_audio_or_502(vid.strip(), max_bytes=MAX_BYTES):
+            yield chunk
 
-    return StreamingResponse(generate(), media_type=content_type)
+    return StreamingResponse(generate(), media_type="audio/webm")
+
+
+@app.get("/api/stream")
+async def api_stream(vid: str):
+    """Stream full YouTube audio through the app (same-origin for the browser player)."""
+    if not vid or not vid.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(status_code=400, detail="Invalid video id")
+
+    async def generate() -> AsyncIterator[bytes]:
+        async for chunk in _stream_ytdlp_audio_or_502(vid.strip()):
+            yield chunk
+
+    return StreamingResponse(generate(), media_type="audio/webm")
 
 
 @app.post("/playlists")

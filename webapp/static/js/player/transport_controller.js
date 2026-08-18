@@ -36,8 +36,6 @@ export class PlaylistTransportController {
 
         this.loadTransportPrefs();
         if (typeof this.load_volume_pref === 'function') this.load_volume_pref();
-        const norm = hub.audioNormalization;
-        if (norm) norm.wire();
 
         // Seek wiring
         if (hub.seek) {
@@ -1003,6 +1001,7 @@ export class PlaylistTransportController {
             const u = new URL(raw_src, window.location.href);
             if (u.pathname.startsWith('/media/')) return false;
             if (u.pathname.startsWith('/api/preview')) return true;
+            if (u.pathname.startsWith('/api/stream')) return true;
             return u.origin !== window.location.origin;
         } catch (e) {
             return false;
@@ -1203,6 +1202,11 @@ export class PlaylistTransportController {
     async ensurePlaybackVariantReady(track, playlist_id, track_id, playback_q, play_gen) {
         const prefs = window.SpolocalQualityPrefs;
         if (!prefs || prefs.hasVariant(track, playback_q)) return true;
+        const stream_src = prefs.streamPlaySrc(track);
+        if (stream_src) {
+            void this.request_quality_download(playlist_id, track_id, playback_q);
+            return true;
+        }
         const pid = String(playlist_id || '').trim();
         if (!pid) return false;
         const hub = this.state.hub;
@@ -1403,6 +1407,13 @@ export class PlaylistTransportController {
         const hub = this.state.hub;
         const norm = hub.audioNormalization;
         if (!norm) return;
+        const src = hub.audio ? String(hub.audio.currentSrc || hub.audio.src || '') : '';
+        const prefs = window.SpolocalQualityPrefs;
+        const is_local = !!(prefs && prefs.normalizeMediaPath(src));
+        if (!is_local) {
+            norm.set_track_gain_db(0);
+            return;
+        }
         norm.wire();
         let db = track && track.loudness_gain_db;
         const pid = String(playlist_id || '').trim();

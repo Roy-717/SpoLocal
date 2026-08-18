@@ -303,6 +303,10 @@ document.addEventListener('click', function (e) {
         }
     }
 
+    function streamSrcForVideoId(vid) {
+        return '/api/stream?vid=' + encodeURIComponent(vid);
+    }
+
     function playPreview(hit, btn) {
         const vid = hit && typeof hit === 'object' ? (hit.video_id || '') : String(hit || '');
         if (!vid) return;
@@ -311,18 +315,13 @@ document.addEventListener('click', function (e) {
         activePreviewVid = vid;
         btn.innerHTML = '<i class="fa-solid fa-stop text-black text-[10px]"></i>';
         btn.classList.add('ring-2', 'ring-white', 'scale-105');
-        // Use the main player directly
         const hub = window.SpolocalPlayerHub;
-        if (hub && hub.audio && hub.audio.src) {
-            hub.audio.src = (hit && typeof hit === 'object' && hit.preview_url) ? hit.preview_url : ('/api/preview?vid=' + encodeURIComponent(vid));
+        if (hub && hub.audio) {
+            hub.audio.src = streamSrcForVideoId(vid);
             hub.audio.load();
-            hub.audio.play().catch(err => {
+            hub.audio.play().catch(() => {
                 hub.audio.pause();
-                hub.titleEl && (hub.titleEl.textContent = hit.title || '');
-                hub.subEl && (hub.subEl.textContent = hit.artist || '');
             });
-            previewTimer = setTimeout(stopPreview, 30000);
-            // Update player UI
             hub.currentTrackId = vid;
             hub.titleEl && (hub.titleEl.textContent = hit.title || '');
             hub.subEl && (hub.subEl.textContent = (hit.artist || hit.channel || ''));
@@ -330,34 +329,10 @@ document.addEventListener('click', function (e) {
             if (hub.queueVisible && hub.queue) hub.queue.render_queue_list();
             return;
         }
-        // Fallback to playPreview via playTrackById
-        const fallbackHub = window.SpolocalPlayerHub;
-        if (fallbackHub && fallbackHub.playTrackById) {
-            fallbackHub.playTrackById(vid);
-            stopPreview = function() {
-                if (previewAudio) {
-                    previewAudio.pause();
-                    previewAudio.removeAttribute('src');
-                    previewAudio.load();
-                }
-                if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
-                activePreviewVid = null;
-                document.querySelectorAll('.preview-btn').forEach(b => {
-                    b.innerHTML = '<i class="fa-solid fa-play text-black text-sm pl-0.5"></i>';
-                    b.classList.remove('ring-2', 'ring-white', 'scale-105');
-                });
-            };
-            previewTimer = setTimeout(stopPreview, 30000);
-        } else {
-            // Original fallback
-            if (hit && typeof hit === 'object' && hit.preview_url) {
-                previewAudio.src = hit.preview_url;
-            } else {
-                previewAudio.src = '/api/preview?vid=' + encodeURIComponent(vid);
-            }
+        if (previewAudio) {
+            previewAudio.src = streamSrcForVideoId(vid);
             previewAudio.load();
             previewAudio.play().catch(() => {});
-            previewTimer = setTimeout(stopPreview, 30000);
         }
     }
 
@@ -581,7 +556,7 @@ document.addEventListener('click', function (e) {
         const playBtn = document.createElement('button');
         playBtn.type = 'button';
         playBtn.className = 'preview-btn absolute bottom-2 right-2 flex h-12 w-12 items-center justify-center rounded-full bg-[#1DB954] text-black shadow-lg transition-all duration-200 hover:scale-105 max-lg:opacity-100 lg:opacity-0 lg:translate-y-1 lg:group-hover:opacity-100 lg:group-hover:translate-y-0 lg:focus:opacity-100 lg:focus:translate-y-0 focus:outline-none';
-        playBtn.title = 'Preview (~30 s)';
+        playBtn.title = 'Stream';
         playBtn.innerHTML = '<i class="fa-solid fa-play text-black text-sm pl-0.5"></i>';
         if (!hit.video_id) {
             playBtn.classList.add('hidden');

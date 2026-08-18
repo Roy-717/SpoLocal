@@ -11,7 +11,7 @@ RUN npm run build:pwa
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -70,6 +70,13 @@
         return Object.keys(variants).filter(function (k) { return !!variants[k]; });
     }
 
+    function streamPlaySrc(track) {
+        if (!track) return '';
+        const vid = String(track.youtube_video_id || '').trim();
+        if (!vid) return '';
+        return '/api/stream?vid=' + encodeURIComponent(vid);
+    }
+
     function resolveExactPlaySrc(track, kbps) {
         if (!track) return '';
         const want = String(kbps != null ? snapKbps(kbps) : playbackKbps());
@@ -90,7 +97,9 @@
     }
 
     function resolvePlaybackPlaySrc(track, kbps) {
-        return resolveExactPlaySrc(track, kbps);
+        const exact = resolveExactPlaySrc(track, kbps);
+        if (exact) return exact;
+        return streamPlaySrc(track);
     }
 
     function resolvePlaySrc(track) {
@@ -107,7 +116,9 @@
             return parseInt(b, 10) - parseInt(a, 10);
         });
         if (keys.length) return variants[keys[0]];
-        return track.play_src || '';
+        if (track.play_src) return track.play_src;
+        if (track.stream_src) return track.stream_src;
+        return streamPlaySrc(track);
     }
 
     function hasVariant(track, kbps) {
@@ -160,6 +171,7 @@
         resolvePlaySrc,
         resolveExactPlaySrc,
         resolvePlaybackPlaySrc,
+        streamPlaySrc,
         normalizeMediaPath,
         hasVariant,
         formatLabel,
@@ -171,4 +183,4 @@
         setDownloadQuality: setDownloadKbps,
     };
 })();
-
+

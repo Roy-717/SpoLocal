@@ -81,6 +81,15 @@ class Track:
             return None
         return "/media/" + quote(rel, safe="/")
 
+    def stream_play_src(self) -> Optional[str]:
+        vid = (self.youtube_video_id or "").strip()
+        if not vid:
+            return None
+        return "/api/stream?vid=" + quote(vid, safe="")
+
+    def playback_src(self, quality: Optional[str] = None) -> Optional[str]:
+        return self.play_src(quality) or self.stream_play_src()
+
     def play_variants(self) -> Dict[str, str]:
         return track_play_variants(self)
 

@@ -53,17 +53,17 @@
             </thead>
             <tbody>
                 {% for track in current.tracks %}
-                <tr class="track-row border-b border-[#282828]{% if track.play_src() %} track-row--playable{% endif %}"
+                <tr class="track-row border-b border-[#282828]{% if track.playback_src() %} track-row--playable{% endif %}"
                     data-track-id="{{ track.id }}"
                     data-title="{{ track.title }}"
                     data-artist="{{ track.artist }}"
                     data-album="{{ (track.album or '')|e }}"
-                    data-play-src="{{ track.play_src() or '' }}"
+                    data-play-src="{{ track.playback_src() or '' }}"
                     data-track-status="{{ track.status.value }}"
                     data-track-url="{{ (track.url or '')|e }}"
                     data-youtube-video-id="{{ track.youtube_video_id or '' }}">
                     <td class="py-2 pl-0 pr-0 align-middle">
-                        {% if track.play_src() %}
+                        {% if track.playback_src() %}
                         <div class="track-index-slot relative flex h-8 w-8 items-center justify-center">
                             <span class="track-row-index pointer-events-none absolute inset-0 flex items-center justify-center text-[#727272] tabular-nums">{{ loop.index }}</span>
                             <button type="button"

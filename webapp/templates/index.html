@@ -516,10 +516,10 @@
 
     <script type="application/json" id="playlist-json">{{ current_tracks_payload | default([], true) | tojson | safe }}</script>
     <script type="application/json" id="spolocal-player-boot">{{ {"playlistId": current.id if current else none, "isHome": is_home|default(false), "libraryPool": home_library_pool|default([], true), "catalog": playlist_catalog|default([], true)} | tojson | safe }}</script>
-    <script src="/static/js/audio_quality_prefs.js"></script>
-    <script src="/static/js/audio_normalization_prefs.js"></script>
-    <script type="module" src="/static/js/PlaylistSession.mjs"></script>
+    <script src="/static/js/audio_quality_prefs.js?v=3"></script>
+    <script src="/static/js/audio_normalization_prefs.js?v=3"></script>
+    <script type="module" src="/static/js/PlaylistSession.mjs?v=3"></script>
     <script type="module" src="/static/pwa/pwa-entry.js"></script>
-    <script src="/static/js/spolocal_chrome.js" defer></script>
+    <script src="/static/js/spolocal_chrome.js?v=3" defer></script>
 </body>
 </html>

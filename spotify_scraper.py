@@ -140,15 +140,17 @@ class YtDlpAudioDownloader:
         self._youtube_dir.mkdir(parents=True, exist_ok=True)
 
     def _ydl_opts(self, outtmpl: str, quality: str | int = 192) -> dict:
-        from webapp.audio_quality import parse_quality_kbps, ytdlp_audio_postprocessor
+        from webapp.audio_quality import parse_quality_kbps, ytdlp_audio_postprocessor, ytdlp_youtube_opts
 
         kbps = parse_quality_kbps(quality)
-        return {
+        opts = ytdlp_youtube_opts()
+        opts.update({
             "format": "bestaudio/best",
             "ffmpeg_location": str(self._ffmpeg_bin),
             "outtmpl": {"default": outtmpl},
             "postprocessors": [ytdlp_audio_postprocessor(kbps)],
-        }
+        })
+        return opts
 
     def download_urls(self, urls: list[str], *, quality: str | int = 192) -> None:
         from webapp.audio_quality import parse_quality_kbps, variant_key

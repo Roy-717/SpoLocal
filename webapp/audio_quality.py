@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import re
+import shutil
+from typing import Any, Optional
 
 QUALITY_LOW_KBPS = 64
 QUALITY_MID_KBPS = 120
@@ -78,3 +80,39 @@ def kbps_from_relpath(relpath: str | None) -> int | None:
         return snap_kbps(int(m.group(1)))
     except ValueError:
         return None
+
+
+def ytdlp_youtube_opts() -> dict[str, Any]:
+    opts: dict[str, Any] = {
+        "force_ipv4": True,
+        "extractor_args": {
+            "youtube": {"player_client": ["web_embedded", "android_vr"]},
+        },
+    }
+    deno = shutil.which("deno")
+    if deno:
+        opts["js_runtimes"] = {"deno": {"path": deno}}
+    return opts
+
+
+def ytdlp_stream_cmd(video_id: str, *, max_seconds: Optional[int] = None) -> list[str]:
+    cmd = [
+        "yt-dlp",
+        "-f",
+        "bestaudio/best",
+        "-o",
+        "-",
+        "--no-playlist",
+        "--quiet",
+        "--no-warnings",
+        "--force-ipv4",
+        "--extractor-args",
+        "youtube:player_client=web_embedded,android_vr",
+    ]
+    deno = shutil.which("deno")
+    if deno:
+        cmd.extend(["--js-runtimes", f"deno:{deno}"])
+    if max_seconds is not None:
+        cmd.extend(["--download-sections", f"*0-{max_seconds}", "--force-keyframes-at-cuts"])
+    cmd.append(f"https://www.youtube.com/watch?v={video_id}")
+    return cmd

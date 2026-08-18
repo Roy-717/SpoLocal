@@ -340,8 +340,10 @@ document.addEventListener('click', function (e) {
             hub.searchStreamHit = hit;
             hub._mediaDecodeRetries = 0;
             hub.audio.pause();
-            hub.audio.src = streamSrcForVideoId(vid);
+            const stream_src = streamSrcForVideoId(vid);
+            hub.audio.removeAttribute('src');
             hub.audio.load();
+            hub.audio.src = stream_src;
             hub.titleEl && (hub.titleEl.textContent = hit.title || '');
             hub.subEl && (hub.subEl.textContent = (hit.artist || hit.channel || ''));
             hub.audio.play().catch(() => {

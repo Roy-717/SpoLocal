@@ -37,6 +37,7 @@ from download_service import DownloadService, youtube_video_id_from_url
 from models import Playlist, Track, track_play_variants
 from tag_metadata import extract_cover
 from cover_image import DEFAULT_JPEG_QUALITY, DEFAULT_THUMB_MAX_SIDE, square_thumb_jpeg
+from audio_quality import ytdlp_stream_cmd as _ytdlp_audio_cmd
 
 
 def _youtube_video_id_from_track_metadata(artist: str, title: str) -> Optional[str]:
@@ -216,23 +217,6 @@ def _resolve_track_play_src(t: Track, *, playback_quality: Optional[str] = None)
     return play_src
 
 
-def _ytdlp_audio_cmd(video_id: str, *, max_seconds: Optional[int] = None) -> list[str]:
-    cmd = [
-        "yt-dlp",
-        "-f",
-        "bestaudio/best",
-        "-o",
-        "-",
-        "--no-playlist",
-        "--quiet",
-        "--no-warnings",
-    ]
-    if max_seconds is not None:
-        cmd.extend(["--download-sections", f"*0-{max_seconds}", "--force-keyframes-at-cuts"])
-    cmd.append(f"https://www.youtube.com/watch?v={video_id}")
-    return cmd
-
-
 async def _open_ytdlp_audio_process(video_id: str, *, max_seconds: Optional[int] = None) -> asyncio.subprocess.Process:
     return await asyncio.create_subprocess_exec(
         *_ytdlp_audio_cmd(video_id, max_seconds=max_seconds),
@@ -331,57 +315,14 @@ async def _get_preview_payload(video_id: str) -> tuple[str, dict[str, str], str]
             _preview_inflight.pop(video_id, None)
 
 
-async def _prefetch_search_previews(hits: list[dict[str, Any]]) -> None:
-    vids = []
-    hit_map: dict[str, list[dict[str, Any]]] = {}
+async def _annotate_search_stream_src(hits: list[dict[str, Any]]) -> None:
+    """Attach same-origin stream URLs; never expose YouTube CDN URLs to the browser."""
     for hit in hits:
+        hit.pop("preview_url", None)
+        hit.pop("preview_ext", None)
         vid = hit.get("video_id")
-        if isinstance(vid, str):
-            v = vid.strip()
-            if not v:
-                continue
-            vids.append(v)
-            hit_map.setdefault(v, []).append(hit)
-    if not vids:
-        return
-
-    # dedupe while preserving order
-    unique: list[str] = []
-    seen: set[str] = set()
-    for vid in vids:
-        if not vid or vid in seen:
-            continue
-        seen.add(vid)
-        unique.append(vid)
-
-    sem = asyncio.Semaphore(3)
-
-    async def _warm(vid: str) -> tuple[str, str | None, str | None] | None:
-        now = _now_ts()
-        cached = _preview_cache.get(vid)
-        if cached is not None and cached[3] > now:
-            return (vid, cached[0], cached[2])
-        try:
-            async with sem:
-                payload = await _get_preview_payload(vid)
-                return (vid, payload[0], payload[2])
-        except Exception:
-            return None
-
-    tasks = [asyncio.create_task(_warm(vid)) for vid in unique]
-    if not tasks:
-        return
-
-    results = await asyncio.gather(*tasks, return_exceptions=False)
-    for item in results:
-        if item is None:
-            continue
-        vid, preview_url, preview_ext = item
-        if not preview_url:
-            continue
-        for hit in hit_map.get(vid, []):
-            hit["preview_url"] = preview_url
-            hit["preview_ext"] = preview_ext
+        if isinstance(vid, str) and vid.strip():
+            hit["stream_src"] = _stream_play_src_for_video_id(vid.strip())
 _cover_tile_cache_dir = _webapp_dir / "static" / "cover_tiles"
 # Small on-disk / on-the-wire JPEGs so the browser does not decode huge album art for tiny UI tiles.
 _COVER_THUMB_MAX_SIDE = DEFAULT_THUMB_MAX_SIDE
@@ -666,6 +607,7 @@ async def api_playlist_recommendations(playlist_id: str, limit: int = 12):
         if len(out) >= lim:
             break
 
+    await _annotate_search_stream_src(out)
     return JSONResponse(out)
 
 
@@ -702,7 +644,7 @@ async def api_search_songs(q: str = "", limit: int = 30, offset: int = 0):
     end = min(start + limit, len(hits_cache))
     hits = hits_cache[start:end]
     if hits:
-        await _prefetch_search_previews(hits)
+        await _annotate_search_stream_src(hits)
 
     return JSONResponse(
         {

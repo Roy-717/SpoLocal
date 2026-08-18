@@ -11,7 +11,11 @@ RUN npm run build:pwa
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates nodejs \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates unzip curl \
+    && curl -fsSL https://github.com/denoland/deno/releases/download/v2.4.5/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip \
+    && unzip -o /tmp/deno.zip -d /usr/local/bin \
+    && rm /tmp/deno.zip \
+    && chmod +x /usr/local/bin/deno \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -8,5 +8,5 @@ aiofiles==24.1.0
 python-dotenv==1.2.2
 mutagen==1.47.0
 requests
-yt-dlp
+yt-dlp[default]
 Pillow>=10.0.0

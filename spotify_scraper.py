@@ -71,33 +71,34 @@ def youtube_video_id_from_ytdlp_info(info: object) -> str | None:
     return None
 
 
+def _existing_file(path: Path) -> Path | None:
+    if path.is_file():
+        return path
+    if path.suffix.lower() != ".mp3":
+        mp3 = path.with_suffix(".mp3")
+        if mp3.is_file():
+            return mp3
+    return None
+
+
 def _filepath_from_ytdlp_info(info: object) -> Path | None:
     """Best-effort path to the final media file after yt-dlp download."""
     if not isinstance(info, dict):
         return None
     fp = info.get("filepath")
     if isinstance(fp, str) and fp:
-        p = Path(fp)
-        if p.is_file():
-            return p
+        found = _existing_file(Path(fp))
+        if found:
+            return found
     etype = info.get("_type")
     if etype in ("playlist", "multi_video"):
-        best: Path | None = None
-        best_m = -1.0
         for ent in info.get("entries") or []:
             if not isinstance(ent, dict):
                 continue
             inner = _filepath_from_ytdlp_info(ent)
-            if inner is None:
-                continue
-            try:
-                m = inner.stat().st_mtime
-            except OSError:
-                m = 0.0
-            if m > best_m:
-                best_m = m
-                best = inner
-        return best
+            if inner is not None:
+                return inner
+        return None
     rds = info.get("requested_downloads")
     if isinstance(rds, list):
         for rd in reversed(rds):
@@ -105,27 +106,28 @@ def _filepath_from_ytdlp_info(info: object) -> Path | None:
                 continue
             f2 = rd.get("filepath")
             if isinstance(f2, str) and f2:
-                p2 = Path(f2)
-                if p2.is_file():
-                    return p2
+                found = _existing_file(Path(f2))
+                if found:
+                    return found
     return None
 
 
-def _newest_mp3_under(root: Path) -> Path | None:
-    """O(1) extra memory — walk tree and keep newest .mp3 by mtime."""
-    if not root.is_dir():
+def _mp3_for_video_id(root: Path, video_id: str, quality_key: str) -> Path | None:
+    """Only the file for this video id + kbps, never an unrelated newest mp3."""
+    if not root.is_dir() or not video_id:
         return None
-    newest: Path | None = None
-    newest_m = -1.0
+    needle = f"[{video_id}]"
+    suffix = f"__{quality_key}k"
+    matches: list[Path] = []
     for p in root.rglob("*.mp3"):
-        try:
-            m = p.stat().st_mtime
-        except OSError:
+        if needle not in p.name:
             continue
-        if m > newest_m:
-            newest_m = m
-            newest = p
-    return newest
+        if suffix not in p.stem:
+            continue
+        matches.append(p)
+    if not matches:
+        return None
+    return max(matches, key=lambda p: p.stat().st_mtime)
 
 
 # ---------------------------------------------------------------------------
@@ -202,17 +204,20 @@ class YtDlpAudioDownloader:
                 info = ydl.extract_info(target, download=True)
             vid = youtube_video_id_from_ytdlp_info(info)
             out_path = _filepath_from_ytdlp_info(info)
-            if out_path is None:
-                out_path = _newest_mp3_under(self._youtube_dir)
+            if out_path is None and vid:
+                out_path = _mp3_for_video_id(self._youtube_dir, vid, qk)
             return (vid, out_path)
         except Exception:
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
-                    ydl.download([target])
+                    info = ydl.extract_info(target, download=True)
+                vid = youtube_video_id_from_ytdlp_info(info)
+                out_path = _filepath_from_ytdlp_info(info)
+                if out_path is None and vid:
+                    out_path = _mp3_for_video_id(self._youtube_dir, vid, qk)
+                return (vid, out_path)
             except Exception:
-                pass
-            out_path = _newest_mp3_under(self._youtube_dir)
-            return (None, out_path)
+                return (None, None)
 
 
 def search_youtube_tracks(project_root: Path, query: str, limit: int = 12) -> list[dict]:
@@ -350,7 +355,12 @@ class SpotifyEmbedDownloader:
         write basic ID3 tags, return (Path | None, youtube_video_id | None).
         Falls back to regular YouTube search if YT Music fails.
         """
-        from webapp.audio_quality import parse_quality_kbps, quality_file_stem, ytdlp_audio_postprocessor
+        from webapp.audio_quality import (
+            parse_quality_kbps,
+            quality_file_stem,
+            ytdlp_audio_postprocessor,
+            ytdlp_youtube_opts,
+        )
 
         kbps = parse_quality_kbps(quality)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -361,7 +371,8 @@ class SpotifyEmbedDownloader:
 
         for provider in ("ytsearch1", "ytmsearch1"):
             query = f"{provider}:{artist} - {title}"
-            opts = {
+            opts = ytdlp_youtube_opts()
+            opts.update({
                 "format": "bestaudio/best",
                 "ffmpeg_location": self._ffmpeg_exe,
                 "outtmpl": {"default": outtmpl},
@@ -369,10 +380,11 @@ class SpotifyEmbedDownloader:
                 "quiet": True,
                 "no_warnings": True,
                 "socket_timeout": 30,
-            }
+            })
             if progress_hook:
                 opts["progress_hooks"] = [progress_hook]
             vid: str | None = None
+            info: dict | None = None
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(query, download=True)
@@ -381,7 +393,8 @@ class SpotifyEmbedDownloader:
                 print(f"yt-dlp [{provider}] extract_info failed for '{artist} - {title}': {exc}")
                 try:
                     with yt_dlp.YoutubeDL(opts) as ydl:
-                        ydl.download([query])
+                        info = ydl.extract_info(query, download=True)
+                    vid = youtube_video_id_from_ytdlp_info(info)
                 except Exception as exc2:
                     print(f"yt-dlp [{provider}] download failed for '{artist} - {title}': {exc2}")
                     continue
@@ -390,11 +403,10 @@ class SpotifyEmbedDownloader:
                 self._tag_file(expected, artist, title, cover_url)
                 return expected, vid
 
-            # yt-dlp may have sanitized the name slightly differently; grab newest mp3
-            candidates = sorted(out_dir.glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
-            if candidates:
-                self._tag_file(candidates[0], artist, title, cover_url)
-                return candidates[0], vid
+            found = _filepath_from_ytdlp_info(info)
+            if found is not None:
+                self._tag_file(found, artist, title, cover_url)
+                return found, vid
 
         return None, None
 

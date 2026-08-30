@@ -44,6 +44,7 @@ export class PlaylistTransportController {
                 if (hub.audio.duration) {
                     hub.timeEl.textContent = this.fmt(Math.floor((parseFloat(hub.seek.value) / 1000) * hub.audio.duration));
                 }
+                this.sync_seek_buffer_ui();
             });
             hub.seek.addEventListener('change', () => {
                 this.seek_to_time_from_slider();
@@ -109,7 +110,13 @@ export class PlaylistTransportController {
             this.persistPlaybackProgress();
             this.updateMediaSessionPlaybackState();
         });
-        hub.audio.addEventListener('ended', () => this.playAtDelta(1));
+        hub.audio.addEventListener('ended', () => {
+            if (this.isSearchStreamPlayback()) {
+                this.setPlayUi(false);
+                return;
+            }
+            this.playAtDelta(1);
+        });
         hub.audio.addEventListener('seeked', () => {
             hub.seeking = false;
             this.persistPlaybackProgress();
@@ -161,7 +168,12 @@ export class PlaylistTransportController {
                     this.lyrics.updateLyricsActiveLine();
                 }, 100);
             }
+            this.sync_seek_buffer_ui();
         });
+
+        hub.audio.addEventListener('progress', () => this.sync_seek_buffer_ui());
+        hub.audio.addEventListener('loadedmetadata', () => this.sync_seek_buffer_ui());
+        hub.audio.addEventListener('emptied', () => this.sync_seek_buffer_ui());
 
         hub.audio.addEventListener('durationchange', () => {
             hub.durEl.textContent = this.fmt(hub.audio.duration);
@@ -697,6 +709,46 @@ export class PlaylistTransportController {
         }
     }
 
+    sync_seek_buffer_ui() {
+        const hub = this.state.hub;
+        const host = hub.seekLoadedEl;
+        const audio = hub.audio;
+        if (!host || !audio) return;
+        const duration = audio.duration;
+        let played_pct = 0;
+        if (duration && isFinite(duration) && duration > 0) {
+            played_pct = Math.min(100, Math.max(0, (audio.currentTime / duration) * 100));
+        } else if (hub.seek) {
+            played_pct = Math.min(100, Math.max(0, parseFloat(hub.seek.value) / 10));
+        }
+        let n = 0;
+        if (duration && isFinite(duration) && duration > 0) {
+            try {
+                n = audio.buffered.length;
+            } catch (e) {
+                n = 0;
+            }
+        }
+        while (host.children.length > n + 1) {
+            host.removeChild(host.lastChild);
+        }
+        while (host.children.length < n + 1) {
+            host.appendChild(document.createElement('div'));
+        }
+        for (let i = 0; i < n; i++) {
+            const el = host.children[i];
+            el.className = 'player-seek-buf';
+            const start = (audio.buffered.start(i) / duration) * 100;
+            const end = (audio.buffered.end(i) / duration) * 100;
+            el.style.left = start + '%';
+            el.style.width = Math.max(0, end - start) + '%';
+        }
+        const played = host.children[n];
+        played.className = 'player-seek-played';
+        played.style.left = '0';
+        played.style.width = played_pct + '%';
+    }
+
     seek_to_time_from_slider() {
         const hub = this.state.hub;
         if (hub.audio.duration) {
@@ -706,6 +758,22 @@ export class PlaylistTransportController {
 
     toggle_main_play() {
         const hub = this.state.hub;
+        if (this.isSearchStreamPlayback() && hub.searchStreamHit) {
+            const vid = String(hub.searchStreamHit.video_id || '').trim();
+            const want = typeof window.spolocalStreamSrc === 'function'
+                ? window.spolocalStreamSrc(vid)
+                : '/api/stream?vid=' + encodeURIComponent(vid);
+            const cur = String(hub.audio.currentSrc || hub.audio.src || '');
+            if (vid && want && cur.indexOf('vid=' + vid) === -1) {
+                hub.audio.src = want;
+            }
+            if (hub.audio.paused) {
+                hub.audio.play().catch(err => this.handlePlayError(err));
+            } else {
+                hub.audio.pause();
+            }
+            return;
+        }
         if (!hub.audio.src) {
             if (hub.randomMode && this.library_pool_playable().length) {
                 this.play_random_from_library();
@@ -726,6 +794,15 @@ export class PlaylistTransportController {
     playAtDelta(delta) {
         const hub = this.state.hub;
         try { console.debug('[Playlist] playAtDelta', { delta: delta, current: hub.currentTrackId }); } catch (e) {}
+        if (this.isSearchStreamPlayback()) {
+            if (delta < 0 && hub.audio) {
+                try { hub.audio.currentTime = 0; } catch (e) {}
+                hub.audio.play().catch(err => this.handlePlayError(err));
+            } else {
+                this.setPlayUi(false);
+            }
+            return;
+        }
         if (hub.randomMode && this.library_pool_playable().length) {
             if (this.playAtDeltaRandomMode(delta)) return;
         }
@@ -1270,9 +1347,20 @@ export class PlaylistTransportController {
         }
     }
 
+    leave_search_stream() {
+        const hub = this.state.hub;
+        if (!hub.searchStreamActive && !hub.searchStreamHit) return;
+        hub.searchStreamActive = false;
+        hub.searchStreamHit = null;
+        if (typeof window.resetSpolocalSearchCards === 'function') {
+            window.resetSpolocalSearchCards();
+        }
+    }
+
     async playTrackById(trackId) {
         const hub = this.state.hub;
         if (!hub.audio) return;
+        this.leave_search_stream();
 
         let t = hub.tracks.find(x => x.id === trackId);
         const fromViewed = !!t;
@@ -1447,11 +1535,6 @@ export class PlaylistTransportController {
         const hub = this.state.hub;
         if (this.isSearchStreamPlayback()) {
             this.setPlayUi(false);
-            if (typeof window.stopSearchStream === 'function') {
-                window.stopSearchStream();
-            } else {
-                hub.searchStreamActive = false;
-            }
             return;
         }
         if (this.isStreamingPlayback()) {

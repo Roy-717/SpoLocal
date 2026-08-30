@@ -24,6 +24,9 @@ export class PlaylistLyricsController {
         // Avoid double-binding when init runs multiple times
         if (hub._lyrics_controller_bound) return;
         hub._lyrics_controller_bound = true;
+        hub.lyricsController = this;
+        hub.lyricsUserScrollUntil = 0;
+        this.bind_lyrics_user_scroll();
 
         // Toggle lyrics panel
         if (Array.isArray(hub.lyricsToggleButtons)) {
@@ -80,6 +83,35 @@ export class PlaylistLyricsController {
         }
     }
 
+    bind_lyrics_user_scroll() {
+        const hub = this.state.hub;
+        if (hub._lyricsUserScrollBound) return;
+        hub._lyricsUserScrollBound = true;
+        const pause_autoscroll = (e) => {
+            if (!hub.lyricsVisible) return;
+            const wrap = hub.lyricsViewWrap;
+            const panel = hub.lyricsPanel;
+            const t = e.target;
+            if (!wrap || !t) return;
+            if (t.closest && t.closest('.lyrics-line')) return;
+            if (wrap.contains(t) || (panel && panel.contains(t))) {
+                hub.lyricsUserScrollUntil = Date.now() + 2000;
+                this.stop_lyrics_scroll_anim();
+            }
+        };
+        document.addEventListener('wheel', pause_autoscroll, { capture: true, passive: true });
+        document.addEventListener('touchmove', pause_autoscroll, { capture: true, passive: true });
+        document.addEventListener('pointerdown', (e) => {
+            if (!hub.lyricsVisible || e.pointerType === 'mouse' && e.button !== 0) return;
+            const wrap = hub.lyricsViewWrap;
+            if (e.target && e.target.closest && e.target.closest('.lyrics-line')) return;
+            if (wrap && wrap.contains(e.target)) {
+                hub.lyricsUserScrollUntil = Date.now() + 2000;
+                this.stop_lyrics_scroll_anim();
+            }
+        }, { capture: true });
+    }
+
     async fetchLyrics(showEmptyMessage) {
         const hub = this.state.hub;
         // Cancel any in-flight request
@@ -99,7 +131,11 @@ export class PlaylistLyricsController {
         if (hub.lrcLinesContainer) hub.lrcLinesContainer.innerHTML = '';
         hub.lyricsEmptyHint.classList.add('hidden');
         hub.lyricsNoAudioHint.classList.add('hidden');
-        if (!hub.currentTrackId) {
+        this.sync_search_lyrics_chrome();
+        const searchVid = hub.searchStreamActive && hub.searchStreamHit
+            ? String(hub.searchStreamHit.video_id || '').trim()
+            : '';
+        if (!hub.currentTrackId && !searchVid) {
             hub.lastLyricsPayload = { lyrics: '', source: 'none', has_audio: false, lrc_data: null, lrc_raw: null };
             hub.lyricsBody.textContent = 'Select a song to play.';
             return;
@@ -110,12 +146,17 @@ export class PlaylistLyricsController {
         const ctrl = new AbortController();
         hub.lyricsAbortController = ctrl;
 
-        const lyricsPid = String(hub.playingPlaylistId || hub.playlistId || '').trim();
         try {
-            const r = await fetch(
-                '/playlists/' + encodeURIComponent(lyricsPid) + '/tracks/' + encodeURIComponent(hub.currentTrackId) + '/lyrics',
-                { signal: ctrl.signal }
-            );
+            let r;
+            if (searchVid) {
+                r = await fetch('/api/stream/chapters?vid=' + encodeURIComponent(searchVid), { signal: ctrl.signal });
+            } else {
+                const lyricsPid = String(hub.playingPlaylistId || hub.playlistId || '').trim();
+                r = await fetch(
+                    '/playlists/' + encodeURIComponent(lyricsPid) + '/tracks/' + encodeURIComponent(hub.currentTrackId) + '/lyrics',
+                    { signal: ctrl.signal }
+                );
+            }
             if (myGen !== hub.lyricsFetchGen) return;
             if (!r.ok) throw new Error('bad status');
             const j = await r.json();
@@ -125,6 +166,26 @@ export class PlaylistLyricsController {
             if (myGen !== hub.lyricsFetchGen) return;
             if (e.name === 'AbortError') return;
             hub.lyricsBody.textContent = 'Could not load lyrics.';
+        }
+    }
+
+    sync_search_lyrics_chrome() {
+        const hub = this.state.hub;
+        const searchOn = !!(hub.searchStreamActive && hub.searchStreamHit);
+        if (hub.lyricsTitle) {
+            hub.lyricsTitle.textContent = searchOn ? 'Chapters' : 'Lyrics';
+        }
+        if (hub.lyricsModeSwitch) {
+            hub.lyricsModeSwitch.classList.toggle('hidden', searchOn);
+        }
+        if (searchOn && hub.lyricsMode !== 'read') {
+            this.setLyricsMode('read');
+        }
+        if (hub.lyricsEmptyHint && hub._lyricsEmptyHintDefault == null) {
+            hub._lyricsEmptyHintDefault = hub.lyricsEmptyHint.innerHTML;
+        }
+        if (hub.lyricsEmptyHint && hub._lyricsEmptyHintDefault != null && !searchOn) {
+            hub.lyricsEmptyHint.innerHTML = hub._lyricsEmptyHintDefault;
         }
     }
 
@@ -140,20 +201,19 @@ export class PlaylistLyricsController {
         hub.lyricsBody.textContent = '';
         hub.lyricsEmptyHint.classList.add('hidden');
         hub.lyricsNoAudioHint.classList.add('hidden');
-        if (!hub.currentTrackId) {
+        const searchOn = !!(hub.searchStreamActive && hub.searchStreamHit);
+        if (!hub.currentTrackId && !searchOn) {
             return;
         }
-        if (!hub.lastLyricsPayload.has_audio) {
+        if (!searchOn && !hub.lastLyricsPayload.has_audio) {
             hub.lyricsNoAudioHint.classList.remove('hidden');
             return;
         }
 
         const text = (hub.lastLyricsPayload.lyrics || '').trim();
         if (text) {
-            // If we have LRC data with timestamps, render clickable lines
             if (hub.lastLyricsPayload.lrc_data && Array.isArray(hub.lastLyricsPayload.lrc_data) && hub.lastLyricsPayload.lrc_data.length > 0) {
                 this.renderLrcLines(hub.lastLyricsPayload.lrc_data);
-                // Highlight current line immediately after rendering
                 if (hub.lyricsMode === 'read') {
                     this.updateLyricsActiveLine();
                 }
@@ -161,9 +221,14 @@ export class PlaylistLyricsController {
                 this.render_plain_lyrics_lines(hub.lastLyricsPayload.lyrics);
             }
         } else if (showHints) {
-            hub.lyricsEmptyHint.classList.remove('hidden');
+            if (searchOn && hub.lyricsEmptyHint) {
+                hub.lyricsEmptyHint.textContent = 'No chapter timestamps on this video.';
+                hub.lyricsEmptyHint.classList.remove('hidden');
+            } else {
+                hub.lyricsEmptyHint.classList.remove('hidden');
+            }
         }
-        if (hub.lyricsMode === 'edit') {
+        if (!searchOn && hub.lyricsMode === 'edit') {
             this.setLyricsMode('edit');
         }
     }
@@ -216,6 +281,14 @@ export class PlaylistLyricsController {
                     if (hub.audio.paused) {
                         hub.audio.play().catch(err => { if (this.transport) this.transport.handlePlayError(err); });
                     }
+                }
+                hub.lyricsUserScrollUntil = 0;
+                const wrap = hub.lyricsViewWrap;
+                if (wrap) {
+                    const wrap_rect = wrap.getBoundingClientRect();
+                    const line_rect = line.getBoundingClientRect();
+                    const delta = (line_rect.top + line_rect.height / 2) - (wrap_rect.top + wrap_rect.height / 2);
+                    this.animate_lyrics_wrap_scroll(wrap, wrap.scrollTop + delta);
                 }
             });
             return line;
@@ -272,15 +345,47 @@ export class PlaylistLyricsController {
         });
 
         // Auto-scroll to keep active line centered
-        const container = hub.lyricsViewWrap;
-        if (container && activeIndex >= 0 && lines[activeIndex]) {
-            const targetLine = lines[activeIndex];
-            // Use scrollIntoView which handles dynamic layout changes better
-            targetLine.scrollIntoView({
-                block: 'center',
-                behavior: 'smooth'
-            });
+        const wrap = hub.lyricsViewWrap;
+        if (!wrap || activeIndex < 0 || !lines[activeIndex]) return;
+        if (hub.lyricsUserScrollUntil && Date.now() < hub.lyricsUserScrollUntil) return;
+        const line = lines[activeIndex];
+        const wrap_rect = wrap.getBoundingClientRect();
+        const line_rect = line.getBoundingClientRect();
+        const delta = (line_rect.top + line_rect.height / 2) - (wrap_rect.top + wrap_rect.height / 2);
+        if (Math.abs(delta) < 4) return;
+        if (hub._lyricsFollowIndex === activeIndex && hub._lyricsScrollAnim) return;
+        hub._lyricsFollowIndex = activeIndex;
+        this.animate_lyrics_wrap_scroll(wrap, wrap.scrollTop + delta);
+    }
+
+    stop_lyrics_scroll_anim() {
+        const hub = this.state.hub;
+        if (hub._lyricsScrollAnim) {
+            cancelAnimationFrame(hub._lyricsScrollAnim);
+            hub._lyricsScrollAnim = 0;
         }
+    }
+
+    animate_lyrics_wrap_scroll(wrap, target_top) {
+        const hub = this.state.hub;
+        this.stop_lyrics_scroll_anim();
+        const start = wrap.scrollTop;
+        const dist = target_top - start;
+        if (Math.abs(dist) < 4) return;
+        const dur = 480;
+        const t0 = performance.now();
+        const step = (now) => {
+            if (hub.lyricsUserScrollUntil && Date.now() < hub.lyricsUserScrollUntil) {
+                hub._lyricsScrollAnim = 0;
+                return;
+            }
+            const p = Math.min(1, (now - t0) / dur);
+            const eased = 1 - Math.pow(1 - p, 3);
+            wrap.scrollTop = start + dist * eased;
+            if (p < 1) hub._lyricsScrollAnim = requestAnimationFrame(step);
+            else hub._lyricsScrollAnim = 0;
+        };
+        hub._lyricsScrollAnim = requestAnimationFrame(step);
     }
 
     renderLrcEditor() {
@@ -492,6 +597,7 @@ export class PlaylistLyricsController {
 
     toggleLyrics() {
         const hub = this.state.hub;
+        if (!hub.lyricsPanel) return;
         hub.lyricsVisible = !hub.lyricsVisible;
         if (hub.lyricsVisible && hub.queueVisible) {
             hub.queueVisible = false;
@@ -532,6 +638,7 @@ export class PlaylistLyricsController {
 
     setLyricsMode(mode) {
         const hub = this.state.hub;
+        if (hub.searchStreamActive) mode = 'read';
         hub.lyricsMode = mode;
         const readOn = mode === 'read';
         const currentTextColor = hub.lyricsPanel.style.getPropertyValue('--lyrics-text-color') || '#ffffff';

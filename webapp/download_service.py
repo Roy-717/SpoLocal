@@ -33,7 +33,6 @@ from spotifydown_api import detect_spotify_url_type
 from spotify_scraper import (
     SpotifyEmbedDownloader,
     YtDlpAudioDownloader,
-    _newest_mp3_under,
     _sanitize_folder_name,
     search_youtube_tracks,
 )

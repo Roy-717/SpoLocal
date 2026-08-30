@@ -6,9 +6,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
+import logging
+import re
 import time
 import mimetypes
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 import asyncio
@@ -38,6 +40,7 @@ from models import Playlist, Track, track_play_variants
 from tag_metadata import extract_cover
 from cover_image import DEFAULT_JPEG_QUALITY, DEFAULT_THUMB_MAX_SIDE, square_thumb_jpeg
 from audio_quality import ytdlp_stream_cmd as _ytdlp_audio_cmd
+from audio_quality import ytdlp_youtube_opts
 
 
 def _youtube_video_id_from_track_metadata(artist: str, title: str) -> Optional[str]:
@@ -130,8 +133,8 @@ _SEARCH_PREVIEW_LIMIT = 6
 _SEARCH_CACHE_MAX_RESULTS = 30
 _SEARCH_CACHE_TTL_SECONDS = 180
 _SEARCH_CACHE_MAX_ENTRIES = 20
-_preview_cache: dict[str, tuple[str, dict[str, str], str, float]] = {}
-_preview_inflight: dict[str, asyncio.Task[tuple[str, dict[str, str], str]]] = {}
+_preview_cache: dict[str, tuple[YoutubeCdnAudio, float]] = {}
+_preview_inflight: dict[str, asyncio.Task[YoutubeCdnAudio]] = {}
 _search_cache: dict[str, tuple[list[dict[str, Any]], float]] = {}
 _search_cache_lock = asyncio.Lock()
 _recommendation_cache: dict[str, tuple[list[dict[str, Any]], float]] = {}
@@ -166,14 +169,14 @@ def _preview_cache_cleanup(now: float) -> None:
     if not _preview_cache:
         return
 
-    expired = [vid for vid, _ in _preview_cache.items() if _[3] <= now]
+    expired = [vid for vid, _ in _preview_cache.items() if _[1] <= now]
     for vid in expired:
         _preview_cache.pop(vid, None)
 
     if len(_preview_cache) <= _PREVIEW_CACHE_MAX_ENTRIES:
         return
 
-    items = sorted(_preview_cache.items(), key=lambda kv: kv[1][3])
+    items = sorted(_preview_cache.items(), key=lambda kv: kv[1][1])
     for vid, _ in items[:len(_preview_cache) - _PREVIEW_CACHE_MAX_ENTRIES]:
         _preview_cache.pop(vid, None)
 
@@ -217,6 +220,112 @@ def _resolve_track_play_src(t: Track, *, playback_quality: Optional[str] = None)
     return play_src
 
 
+_RE_DESC_CHAPTER = re.compile(
+    r"(?m)^\s*(?:[\[(])?((?:\d{1,2}:)?\d{1,2}:\d{2})[\])]?\s*[-.]?\s+(.+?)\s*$"
+)
+
+
+def _clock_to_seconds(stamp: str) -> Optional[float]:
+    parts = stamp.split(":")
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        return None
+    if len(nums) == 2:
+        return float(nums[0] * 60 + nums[1])
+    if len(nums) == 3:
+        return float(nums[0] * 3600 + nums[1] * 60 + nums[2])
+    return None
+
+
+def _fmt_chapter_clock(time_ms: int) -> str:
+    total_s = max(0, int(time_ms) // 1000)
+    hours, rem = divmod(total_s, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+class YoutubeCdnAudio:
+    SLICE_BYTES = 512 * 1024
+
+    def __init__(
+        self,
+        url: str,
+        headers: dict[str, str],
+        ext: str,
+        filesize: Optional[int],
+        chapters: Optional[list[dict[str, Any]]] = None,
+    ):
+        self.url = url
+        self.headers = headers
+        self.ext = ext
+        self.filesize = filesize
+        self.chapters = chapters or []
+
+    @staticmethod
+    def chapters_from_info(info: dict[str, Any]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for ch in info.get("chapters") or []:
+            if not isinstance(ch, dict):
+                continue
+            start = ch.get("start_time")
+            title = str(ch.get("title") or "").strip()
+            if start is None or not title:
+                continue
+            time_ms = int(float(start) * 1000)
+            rows.append({"time_ms": time_ms, "text": f"{_fmt_chapter_clock(time_ms)}  {title}"})
+        if len(rows) >= 1:
+            return rows
+        return YoutubeCdnAudio._chapters_from_description(str(info.get("description") or ""))
+
+    @staticmethod
+    def _chapters_from_description(description: str) -> list[dict[str, Any]]:
+        found: list[dict[str, Any]] = []
+        last_s = -1.0
+        for match in _RE_DESC_CHAPTER.finditer(description or ""):
+            seconds = _clock_to_seconds(match.group(1))
+            title = (match.group(2) or "").strip()
+            if seconds is None or seconds < last_s or not title:
+                continue
+            if title.lower().startswith("http"):
+                continue
+            last_s = seconds
+            time_ms = int(seconds * 1000)
+            found.append({"time_ms": time_ms, "text": f"{_fmt_chapter_clock(time_ms)}  {title}"})
+        if len(found) < 2:
+            return []
+        return found
+
+    def slice_for_range_header(self, range_header: Optional[str]) -> tuple[int, int]:
+        start = 0
+        end: Optional[int] = None
+        if range_header:
+            text = range_header.strip()
+            if text.lower().startswith("bytes="):
+                spec = text.split("=", 1)[1].split(",", 1)[0].strip()
+                left, _, right = spec.partition("-")
+                try:
+                    if left:
+                        start = max(0, int(left))
+                    if right:
+                        end = int(right)
+                except ValueError:
+                    start = 0
+                    end = None
+        if end is None or (end - start + 1) > self.SLICE_BYTES:
+            end = start + self.SLICE_BYTES - 1
+        total = self.filesize
+        if total and total > 0:
+            if start >= total:
+                start = max(0, total - 1)
+            end = min(end, total - 1)
+        if end < start:
+            end = start
+        return start, end
+
+
 async def _open_ytdlp_audio_process(video_id: str, *, max_seconds: Optional[int] = None) -> asyncio.subprocess.Process:
     return await asyncio.create_subprocess_exec(
         *_ytdlp_audio_cmd(video_id, max_seconds=max_seconds),
@@ -225,8 +334,287 @@ async def _open_ytdlp_audio_process(video_id: str, *, max_seconds: Optional[int]
     )
 
 
-async def _stream_ytdlp_audio_or_502(video_id: str, *, max_bytes: Optional[int] = None) -> AsyncIterator[bytes]:
-    max_seconds = 30 if max_bytes is not None else None
+_STREAM_MEDIA_TYPES = {
+    "webm": "audio/webm",
+    "m4a": "audio/mp4",
+    "mp4": "audio/mp4",
+    "ogg": "audio/ogg",
+    "opus": "audio/ogg",
+    "mp3": "audio/mpeg",
+}
+
+_stream_log = logging.getLogger("spolocal.stream")
+
+
+def _cdn_host(url: str) -> str:
+    return urlsplit(url).netloc or "?"
+
+
+def _log_cdn_fail(
+    *,
+    where: str,
+    vid: str,
+    url: str,
+    force_ipv4: bool,
+    status: Optional[int] = None,
+    retry_after: Optional[str] = None,
+    err: Optional[str] = None,
+) -> None:
+    _stream_log.warning(
+        "cdn %s fail vid=%s host=%s status=%s ipv4=%s retry_after=%s err=%s",
+        where,
+        vid,
+        _cdn_host(url),
+        status if status is not None else "-",
+        force_ipv4,
+        retry_after or "-",
+        err or "-",
+    )
+
+
+def _int_or_none(value: Any) -> Optional[int]:
+    try:
+        if value is None:
+            return None
+        n = int(value)
+        return n if n > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _clen_from_url(url: str) -> Optional[int]:
+    for key, val in parse_qsl(urlsplit(url).query, keep_blank_values=True):
+        if key.lower() == "clen":
+            return _int_or_none(val)
+    return None
+
+
+def _url_without_query_range(url: str) -> str:
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k.lower() != "range"]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def _httpx_youtube_client(*, force_ipv4: bool) -> httpx.AsyncClient:
+    kwargs: dict[str, Any] = {
+        "follow_redirects": True,
+        "timeout": httpx.Timeout(20.0, read=600.0),
+    }
+    if force_ipv4:
+        kwargs["transport"] = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+    return httpx.AsyncClient(**kwargs)
+
+
+def _url_with_byte_range(url: str, start: int, end: int) -> str:
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k.lower() != "range"]
+    query.append(("range", f"{int(start)}-{int(end)}"))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+class YoutubeStreamProxy:
+    """Same-origin proxy of YouTube's audio URL so the browser can Range-buffer like YouTube."""
+
+    def __init__(self, video_id: str):
+        self.video_id = video_id
+
+    def _media_type(self, ext: str, content_type: Optional[str]) -> str:
+        if content_type and "html" not in content_type.lower():
+            return content_type.split(";")[0].strip()
+        return _STREAM_MEDIA_TYPES.get((ext or "").lower(), "application/octet-stream")
+
+    def _out_headers(self, *, start: int, end: int, total: Optional[int], content_type_len: Optional[int] = None) -> dict[str, str]:
+        length = end - start + 1
+        total_s = str(total) if total and total > 0 else "*"
+        return {
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no",
+            "Content-Range": f"bytes {start}-{end}/{total_s}",
+            "Content-Length": str(content_type_len or length),
+        }
+
+    def _cdn_headers(self, yt_headers: dict[str, str], start: int, end: int) -> dict[str, str]:
+        headers = dict(yt_headers)
+        headers["Range"] = f"bytes={start}-{end}"
+        headers.setdefault("Referer", "https://www.youtube.com/")
+        headers.setdefault("Origin", "https://www.youtube.com")
+        return headers
+
+    async def _probe_filesize(self, source: YoutubeCdnAudio) -> Optional[int]:
+        from_url = _clen_from_url(source.url)
+        if from_url:
+            return from_url
+        if source.filesize and source.filesize > 0:
+            return source.filesize
+        headers = self._cdn_headers(source.headers, 0, 0)
+        url = _url_without_query_range(source.url)
+        for force_ipv4 in (False, True):
+            client = _httpx_youtube_client(force_ipv4=force_ipv4)
+            try:
+                req = client.build_request("GET", url, headers=headers)
+                resp = await client.send(req, stream=True)
+                cr = resp.headers.get("content-range") or ""
+                status = resp.status_code
+                retry_after = resp.headers.get("retry-after")
+                await resp.aclose()
+            except httpx.HTTPError as exc:
+                _log_cdn_fail(
+                    where="probe",
+                    vid=self.video_id,
+                    url=url,
+                    force_ipv4=force_ipv4,
+                    err=type(exc).__name__,
+                )
+                continue
+            finally:
+                await client.aclose()
+            if status >= 400:
+                _log_cdn_fail(
+                    where="probe",
+                    vid=self.video_id,
+                    url=url,
+                    force_ipv4=force_ipv4,
+                    status=status,
+                    retry_after=retry_after,
+                )
+                continue
+            if "/" in cr:
+                try:
+                    return int(cr.rsplit("/", 1)[-1])
+                except ValueError:
+                    pass
+        return None
+
+    async def _try_cdn_proxy(
+        self,
+        method: str,
+        source: YoutubeCdnAudio,
+        range_header: Optional[str],
+    ) -> Optional[Response]:
+        start, end = source.slice_for_range_header(range_header)
+        headers = self._cdn_headers(source.headers, start, end)
+        resp = None
+        client = None
+        for use_query_range in (False, True):
+            url = (
+                _url_with_byte_range(source.url, start, end)
+                if use_query_range
+                else _url_without_query_range(source.url)
+            )
+            for force_ipv4 in (False, True):
+                client = _httpx_youtube_client(force_ipv4=force_ipv4)
+                try:
+                    req = client.build_request("GET" if method != "HEAD" else "HEAD", url, headers=headers)
+                    resp = await client.send(req, stream=True)
+                except httpx.HTTPError as exc:
+                    _log_cdn_fail(
+                        where="proxy",
+                        vid=self.video_id,
+                        url=url,
+                        force_ipv4=force_ipv4,
+                        err=type(exc).__name__,
+                    )
+                    await client.aclose()
+                    client = None
+                    resp = None
+                    continue
+                if resp.status_code >= 400:
+                    _log_cdn_fail(
+                        where="proxy",
+                        vid=self.video_id,
+                        url=url,
+                        force_ipv4=force_ipv4,
+                        status=resp.status_code,
+                        retry_after=resp.headers.get("retry-after"),
+                    )
+                    await resp.aclose()
+                    await client.aclose()
+                    client = None
+                    resp = None
+                    continue
+                break
+            if resp is not None:
+                break
+        if resp is None or client is None:
+            return None
+        total = source.filesize or _clen_from_url(source.url)
+        cr = resp.headers.get("content-range") or ""
+        if "/" in cr:
+            try:
+                probed = int(cr.rsplit("/", 1)[-1])
+                if probed > 0 and (not total or probed > total):
+                    total = probed
+                    source.filesize = probed
+            except ValueError:
+                pass
+        media_type = self._media_type(source.ext, resp.headers.get("content-type"))
+        out = self._out_headers(start=start, end=end, total=total)
+        if method == "HEAD":
+            await resp.aclose()
+            await client.aclose()
+            head_headers = {
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+            }
+            if total:
+                head_headers["Content-Length"] = str(total)
+            return Response(status_code=200, headers=head_headers, media_type=media_type)
+
+        want = end - start + 1
+        captured_resp = resp
+        captured_client = client
+
+        async def generate() -> AsyncIterator[bytes]:
+            sent = 0
+            try:
+                async for chunk in captured_resp.aiter_bytes(65536):
+                    if sent >= want:
+                        break
+                    if sent + len(chunk) > want:
+                        chunk = chunk[: want - sent]
+                    sent += len(chunk)
+                    yield chunk
+                    if sent >= want:
+                        break
+            finally:
+                await captured_resp.aclose()
+                await captured_client.aclose()
+
+        return StreamingResponse(
+            generate(),
+            status_code=206,
+            media_type=media_type,
+            headers=out,
+        )
+
+    async def response_for(self, request: Request) -> Response:
+        method = "HEAD" if request.method == "HEAD" else "GET"
+        range_header = request.headers.get("range")
+        for attempt in range(2):
+            if attempt:
+                _preview_cache.pop(self.video_id, None)
+            try:
+                source = await _get_preview_payload(self.video_id)
+            except ValueError as exc:
+                _stream_log.warning("cdn extract fail vid=%s err=%s", self.video_id, exc)
+                break
+            if not source.filesize:
+                source.filesize = await self._probe_filesize(source)
+            proxied = await self._try_cdn_proxy(method, source, range_header)
+            if proxied is not None:
+                return proxied
+        _stream_log.warning("cdn give up vid=%s", self.video_id)
+        raise HTTPException(status_code=502, detail="Could not stream audio")
+
+
+async def _stream_ytdlp_audio_or_502(
+    video_id: str,
+    *,
+    max_bytes: Optional[int] = None,
+    max_seconds: Optional[int] = None,
+) -> AsyncIterator[bytes]:
     proc = await _open_ytdlp_audio_process(video_id, max_seconds=max_seconds)
     sent_bytes = 0
     sent_any = False
@@ -263,44 +651,53 @@ async def _stream_ytdlp_audio_or_502(video_id: str, *, max_bytes: Optional[int] 
             raise HTTPException(status_code=502, detail=f"Audio stream failed ({rc})")
 
 
-def _extract_preview_payload(video_id: str) -> tuple[str, dict[str, str], str]:
+def _extract_preview_payload(video_id: str) -> YoutubeCdnAudio:
     url_yt = f"https://www.youtube.com/watch?v={video_id}"
-    opts = {
+    opts: dict[str, Any] = {
         "format": "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
         "quiet": True,
         "no_warnings": True,
     }
+    opts.update(ytdlp_youtube_opts())
     with _yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url_yt, download=False)
     if not info:
         raise ValueError("No info returned by yt-dlp")
-    return (
-        str(info.get("url") or ""),
-        {str(k): str(v) for k, v in (info.get("http_headers") or {}).items() if isinstance(k, str) and isinstance(v, str)},
-        str(info.get("ext") or "webm"),
+    raw_url = str(info.get("url") or "")
+    filesize = _clen_from_url(raw_url) or _int_or_none(info.get("filesize")) or _int_or_none(info.get("filesize_approx"))
+    return YoutubeCdnAudio(
+        url=raw_url,
+        headers={
+            str(k): str(v)
+            for k, v in (info.get("http_headers") or {}).items()
+            if isinstance(k, str) and isinstance(v, str)
+        },
+        ext=str(info.get("ext") or "webm"),
+        filesize=filesize,
+        chapters=YoutubeCdnAudio.chapters_from_info(info),
     )
 
 
-async def _cache_or_refresh_preview(video_id: str) -> tuple[str, dict[str, str], str]:
-    url, headers, ext = await asyncio.get_running_loop().run_in_executor(
+async def _cache_or_refresh_preview(video_id: str) -> YoutubeCdnAudio:
+    source = await asyncio.get_running_loop().run_in_executor(
         None,
         _extract_preview_payload,
         video_id,
     )
-    if not url:
+    if not source.url:
         raise ValueError("No preview stream URL from yt-dlp")
 
     now = _now_ts()
-    _preview_cache[video_id] = (url, headers, ext, now + _PREVIEW_CACHE_TTL_SECONDS)
+    _preview_cache[video_id] = (source, now + _PREVIEW_CACHE_TTL_SECONDS)
     _preview_cache_cleanup(now)
-    return url, headers, ext
+    return source
 
 
-async def _get_preview_payload(video_id: str) -> tuple[str, dict[str, str], str]:
+async def _get_preview_payload(video_id: str) -> YoutubeCdnAudio:
     now = _now_ts()
     entry = _preview_cache.get(video_id)
-    if entry is not None and entry[3] > now:
-        return entry[0], entry[1], entry[2]
+    if entry is not None and entry[1] > now:
+        return entry[0]
 
     pending = _preview_inflight.get(video_id)
     if pending is None:
@@ -665,23 +1062,41 @@ async def api_preview(vid: str):
     MAX_BYTES = 512 * 1024  # ~30 s at 128 kbps
 
     async def generate() -> AsyncIterator[bytes]:
-        async for chunk in _stream_ytdlp_audio_or_502(vid.strip(), max_bytes=MAX_BYTES):
+        async for chunk in _stream_ytdlp_audio_or_502(vid.strip(), max_bytes=MAX_BYTES, max_seconds=30):
             yield chunk
 
     return StreamingResponse(generate(), media_type="audio/webm")
 
 
-@app.get("/api/stream")
-async def api_stream(vid: str):
-    """Stream full YouTube audio through the app (same-origin for the browser player)."""
+@app.get("/api/stream/chapters")
+async def api_stream_chapters(vid: str):
+    """YouTube chapters for search/stream playback only (not downloaded tracks)."""
     if not vid or not vid.replace("-", "").replace("_", "").isalnum():
         raise HTTPException(status_code=400, detail="Invalid video id")
+    try:
+        source = await _get_preview_payload(vid.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    chapters = source.chapters or []
+    lyrics = "\n".join(str(row.get("text") or "") for row in chapters)
+    return JSONResponse(
+        {
+            "lyrics": lyrics,
+            "source": "chapters" if chapters else "none",
+            "has_audio": True,
+            "lrc_data": chapters or None,
+            "lrc_raw": None,
+            "readonly": True,
+        }
+    )
 
-    async def generate() -> AsyncIterator[bytes]:
-        async for chunk in _stream_ytdlp_audio_or_502(vid.strip()):
-            yield chunk
 
-    return StreamingResponse(generate(), media_type="audio/webm")
+@app.api_route("/api/stream", methods=["GET", "HEAD"])
+async def api_stream(request: Request, vid: str):
+    """Proxy YouTube audio with Range so the player buffers/seeks like YouTube."""
+    if not vid or not vid.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(status_code=400, detail="Invalid video id")
+    return await YoutubeStreamProxy(vid.strip()).response_for(request)
 
 
 @app.post("/playlists")

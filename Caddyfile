@@ -15,6 +15,9 @@
 
 https://localhost:8000, https://127.0.0.1:8000, https://:8000 {
 	tls internal
-	encode gzip zstd
-	reverse_proxy spolocal:8000
+	@not_stream not path /api/stream /api/preview
+	encode @not_stream gzip zstd
+	reverse_proxy spolocal:8000 {
+		flush_interval -1
+	}
 }

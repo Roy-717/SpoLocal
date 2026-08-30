@@ -101,19 +101,60 @@ body { background: #121212; color: #fff; }
     border-radius: 2px;
     pointer-events: auto;
 }
-/* Ensure track is clickable in Chromium by making it a positioned block */
+.player-seek-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 16px;
+}
+#player-seek-loaded {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+    pointer-events: none;
+    background: #4d4d4d;
+}
+#player-seek-loaded .player-seek-buf {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: #7a7a7a;
+}
+#player-seek-loaded .player-seek-played {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1;
+    background: #1DB954;
+}
 #player-seek {
     display: block;
     min-height: 16px;
     margin: -6px 0;
     padding: 6px 0;
+    background: transparent;
     background-clip: content-box;
     cursor: pointer;
+    position: relative;
+    z-index: 2;
 }
 #player-seek::-webkit-slider-runnable-track {
     height: 4px;
-    background: #4d4d4d;
+    background: transparent;
     border-radius: 2px;
+}
+#player-seek::-moz-range-track {
+    height: 4px;
+    background: transparent;
+    border: 0;
+    border-radius: 2px;
+}
+#player-seek::-moz-range-progress {
+    background: transparent;
 }
 #player-seek::-webkit-slider-thumb, #player-volume::-webkit-slider-thumb {
     -webkit-appearance: none;

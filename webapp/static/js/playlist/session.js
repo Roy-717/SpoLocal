@@ -203,6 +203,7 @@ export class PlaylistSessionController {
         hub.audio = document.getElementById('player-audio');
         hub.audioNormalization = hub.audio ? new AudioNormalizationController(hub.audio) : null;
         hub.seek = document.getElementById('player-seek');
+        hub.seekLoadedEl = document.getElementById('player-seek-loaded');
         hub.volumeEl = document.getElementById('player-volume');
         hub.volumeIconEl = document.getElementById('player-volume-icon');
         hub.timeEl = document.getElementById('player-time');
@@ -212,6 +213,8 @@ export class PlaylistSessionController {
         hub.coverImg = document.getElementById('player-cover');
         hub.coverWrap = document.getElementById('player-cover-wrap');
         hub.lyricsPanel = document.getElementById('lyrics-panel');
+        hub.lyricsTitle = document.getElementById('lyrics-title');
+        hub.lyricsModeSwitch = document.getElementById('lyrics-mode-switch');
         hub.lyricsBody = document.getElementById('lyrics-body');
         hub.lyricsEmptyHint = document.getElementById('lyrics-empty-hint');
         hub.lyricsNoAudioHint = document.getElementById('lyrics-no-audio-hint');

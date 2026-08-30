@@ -285,56 +285,76 @@ document.addEventListener('click', function (e) {
         return parseJsonApiResponse(r, 'Could not create playlist.');
     }
 
-    function stopPreview() {
+    function reset_search_card_buttons() {
+        activePreviewVid = null;
+        document.querySelectorAll('.preview-btn').forEach(b => {
+            b.innerHTML = '<i class="fa-solid fa-play text-black text-sm pl-0.5"></i>';
+            b.classList.remove('ring-2', 'ring-white', 'scale-105');
+        });
+    }
+    window.resetSpolocalSearchCards = reset_search_card_buttons;
+
+    function stopPreview(opts) {
+        const restore_library = !opts || opts.restore_library !== false;
         if (previewAudio) {
             previewAudio.pause();
             previewAudio.removeAttribute('src');
             previewAudio.load();
         }
         if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
-        activePreviewVid = null;
-        document.querySelectorAll('.preview-btn').forEach(b => {
-            b.innerHTML = '<i class="fa-solid fa-play text-black text-sm pl-0.5"></i>';
-            b.classList.remove('ring-2', 'ring-white', 'scale-105');
-        });
+        reset_search_card_buttons();
         const hub = window.SpolocalPlayerHub;
-        if (hub) {
-            hub.searchStreamActive = false;
-            hub.searchStreamHit = null;
-            if (hub.audio) {
-                hub.audio.pause();
-                hub.audio.removeAttribute('src');
-                hub.audio.load();
-            }
-            if (hub.currentTrackId && hub.titleEl) {
-                let t = (hub.tracks || []).find((x) => x.id === hub.currentTrackId);
-                if (!t && hub.playingTracks) {
-                    t = hub.playingTracks.find((x) => x.id === hub.currentTrackId);
+        if (hub && hub.searchStreamActive) {
+            if (!restore_library) {
+                if (hub.audio) hub.audio.pause();
+            } else {
+                hub.searchStreamActive = false;
+                hub.searchStreamHit = null;
+                if (hub.audio) {
+                    hub.audio.pause();
+                    hub.audio.removeAttribute('src');
+                    hub.audio.load();
                 }
-                if (t) {
-                    hub.titleEl.textContent = t.title || '';
-                    if (hub.subEl) hub.subEl.textContent = t.artist || '';
+                if (hub.currentTrackId && hub.titleEl) {
+                    let t = (hub.tracks || []).find((x) => x.id === hub.currentTrackId);
+                    if (!t && hub.playingTracks) {
+                        t = hub.playingTracks.find((x) => x.id === hub.currentTrackId);
+                    }
+                    if (t) {
+                        hub.titleEl.textContent = t.title || '';
+                        if (hub.subEl) hub.subEl.textContent = t.artist || '';
+                        const prefs = window.SpolocalQualityPrefs;
+                        const src = prefs ? prefs.resolvePlaySrc(t) : t.play_src;
+                        if (src && hub.audio) {
+                            hub.audio.src = src;
+                        }
+                    }
                 }
             }
         }
         if (hub && typeof hub.setPlayUi === 'function') {
-            hub.setPlayUi(false);
+            hub.setPlayUi(!!(hub.audio && !hub.audio.paused));
+        }
+        if (restore_library && hub && hub.lyricsVisible && hub.lyricsController) {
+            hub.lyricsController.fetchLyrics(true);
         }
     }
 
     function streamSrcForVideoId(vid) {
         return '/api/stream?vid=' + encodeURIComponent(vid);
     }
+    window.spolocalStreamSrc = streamSrcForVideoId;
 
     function playPreview(hit, btn) {
         const vid = hit && typeof hit === 'object' ? (hit.video_id || '') : String(hit || '');
         if (!vid) return;
         if (activePreviewVid === vid) { stopPreview(); return; }
-        stopPreview();
+        const hub = window.SpolocalPlayerHub;
+        stopPreview({ restore_library: false });
+        reset_search_card_buttons();
         activePreviewVid = vid;
         btn.innerHTML = '<i class="fa-solid fa-stop text-black text-[10px]"></i>';
         btn.classList.add('ring-2', 'ring-white', 'scale-105');
-        const hub = window.SpolocalPlayerHub;
         if (hub && hub.audio) {
             hub.searchStreamActive = true;
             hub.searchStreamHit = hit;
@@ -346,11 +366,13 @@ document.addEventListener('click', function (e) {
             hub.audio.src = stream_src;
             hub.titleEl && (hub.titleEl.textContent = hit.title || '');
             hub.subEl && (hub.subEl.textContent = (hit.artist || hit.channel || ''));
-            hub.audio.play().catch(() => {
-                stopPreview();
+            hub.audio.play().catch((err) => {
+                if (err && err.name === 'AbortError') return;
+                if (typeof hub.setPlayUi === 'function') hub.setPlayUi(false);
             });
             if (typeof hub.setPlayUi === 'function') hub.setPlayUi(true);
             if (hub.queueVisible && hub.queue) hub.queue.render_queue_list();
+            if (hub.lyricsVisible && hub.lyricsController) hub.lyricsController.fetchLyrics(true);
             return;
         }
         if (previewAudio) {
@@ -380,7 +402,6 @@ document.addEventListener('click', function (e) {
 
     function closeGlobalSearch() {
         closeAddToPlaylistPopover();
-        stopPreview();
         if (gPanel) gPanel.classList.add('hidden');
     }
 
@@ -679,7 +700,6 @@ document.addEventListener('click', function (e) {
     async function fetchPlaylistRecommendationsWhenVisible(pid) {
         const grid = document.getElementById('playlist-recommendations-grid');
         const msg = document.getElementById('playlist-recommendations-msg');
-        stopPreview();
         if (!grid || !pid) return;
         grid.innerHTML = '';
         if (msg) {
@@ -731,7 +751,6 @@ document.addEventListener('click', function (e) {
         const section = document.getElementById('playlist-recommendations-section');
         const grid = document.getElementById('playlist-recommendations-grid');
         const msg = document.getElementById('playlist-recommendations-msg');
-        stopPreview();
         if (!section || !grid || !pid) return;
         grid.innerHTML = '';
         if (msg) {
@@ -801,20 +820,17 @@ document.addEventListener('click', function (e) {
     if (gPrevBtn) gPrevBtn.addEventListener('click', function () {
         if (searchOffset === 0) return;
         searchOffset = Math.max(0, searchOffset - PAGE_SIZE);
-        stopPreview();
         runGlobalSearch(currentSearchQuery, searchOffset);
     });
     if (gNextBtn) gNextBtn.addEventListener('click', function () {
         if (!searchHasMore) return;
         searchOffset += PAGE_SIZE;
-        stopPreview();
         runGlobalSearch(currentSearchQuery, searchOffset);
     });
 
     async function runGlobalSearch(q, offset = 0) {
         if (!gPanel || !gList) return;
         closeAddToPlaylistPopover();
-        stopPreview();
         currentSearchQuery = (q || '').trim();
         searchOffset = Math.max(0, Number(offset) || 0);
         searchHits = [];

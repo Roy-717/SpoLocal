@@ -17,24 +17,28 @@ export class AudioNormalizationController {
 
     wire() {
         if (this._wired) return;
-        try {
-            this.ctx = new AudioContext();
-            const src = this.ctx.createMediaElementSource(this.audio_el);
-            this.gain_node = this.ctx.createGain();
-            src.connect(this.gain_node);
-            this.gain_node.connect(this.ctx.destination);
-            this.audio_el.volume = 1;
-            this._wired = true;
-            this.audio_el.addEventListener('play', () => {
-                if (this.ctx && this.ctx.state === 'suspended') {
-                    this.ctx.resume().catch(() => {});
-                }
-            });
-        } catch (e) {
-            this._wired = false;
-        }
         const prefs = window.SpolocalNormalizationPrefs;
         if (prefs) this.enabled = prefs.enabled();
+        const start_ctx = () => {
+            if (this._wired) return;
+            try {
+                this.ctx = new AudioContext();
+                const src = this.ctx.createMediaElementSource(this.audio_el);
+                this.gain_node = this.ctx.createGain();
+                src.connect(this.gain_node);
+                this.gain_node.connect(this.ctx.destination);
+                this.audio_el.volume = 1;
+                this._wired = true;
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume().catch(() => {});
+                }
+            } catch (e) {
+                this._wired = false;
+            }
+            this._sync_gain();
+        };
+        this.audio_el.addEventListener('play', start_ctx, { once: true });
+        if (!this.audio_el.paused) start_ctx();
         this._sync_gain();
     }
 

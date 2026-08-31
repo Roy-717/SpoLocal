@@ -8,6 +8,7 @@ import { PlaylistColumnResizer } from '../ui/column_resizer.js';
 import { PlaylistHomeViewController } from './home_view_controller.js';
 import { SettingsController } from '../ui/settings_controller.js';
 import { TrackInfoController } from '../ui/track_info_controller.js';
+import { TrackEditController } from '../ui/track_edit_controller.js';
 import { AudioNormalizationController } from '../player/audio_normalization_controller.js';
 
 /**
@@ -32,13 +33,15 @@ export class PlaylistSessionController {
         this.home = new PlaylistHomeViewController(state, this.transport);
         this.settings = new SettingsController(state);
         this.trackInfo = new TrackInfoController(state);
+        this.trackEdit = new TrackEditController(state);
 
         // Wire cross-controller references so each controller can call its peers
         this.transport.setCrossRefs(this.queue, this.lyrics, this.home);
         this.queue.setCrossRefs(this.lyrics);
         this.editModal.setCrossRefs(this.contextMenu);
         this.settings.setCrossRefs(this.transport, this.download);
-        this.contextMenu.setCrossRefs(this.queue, this.editModal, this.transport, this.trackInfo, this.download);
+        this.contextMenu.setCrossRefs(this.queue, this.editModal, this.transport, this.trackInfo, this.download, this.trackEdit);
+        this.trackEdit.setCrossRefs(this.transport, this.queue, this.contextMenu);
         this.download.setCrossRefs(this);
     }
 
@@ -58,6 +61,7 @@ export class PlaylistSessionController {
         this.contextMenu.init();
         this.settings.init();
         this.trackInfo.init();
+        this.trackEdit.init();
         this.download.init();
 
         if (this.state.hub.isHomeView) {

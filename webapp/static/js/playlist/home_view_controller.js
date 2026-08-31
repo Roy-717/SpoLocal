@@ -181,6 +181,7 @@ export class PlaylistHomeViewController {
             row_el.dataset.playSrc = t.play_src;
             row_el.dataset.title = t.title || '';
             row_el.dataset.artist = t.artist || '';
+            row_el.dataset.album = t.album != null ? String(t.album) : '';
 
             const num = document.createElement('span');
             num.className = 'w-6 text-center text-sm text-[#727272] tabular-nums shrink-0';
@@ -199,10 +200,10 @@ export class PlaylistHomeViewController {
             const text = document.createElement('div');
             text.className = 'min-w-0 flex-1';
             const title = document.createElement('div');
-            title.className = 'truncate text-sm font-medium text-white';
+            title.className = 'track-row-title truncate text-sm font-medium text-white';
             title.textContent = t.title || '';
             const artist = document.createElement('div');
-            artist.className = 'truncate text-xs text-[#B3B3B3]';
+            artist.className = 'track-row-artist truncate text-xs text-[#B3B3B3]';
             artist.textContent = t.artist || '';
             text.appendChild(title);
             text.appendChild(artist);

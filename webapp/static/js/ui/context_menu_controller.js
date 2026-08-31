@@ -18,17 +18,20 @@ export class PlaylistContextMenuController {
         this.transport = null;
         /** @type {import('./track_info_controller.js').TrackInfoController|null} */
         this.trackInfo = null;
+        /** @type {import('./track_edit_controller.js').TrackEditController|null} */
+        this.trackEdit = null;
         /** @type {import('../services/download_controller.js').PlaylistDownloadController|null} */
         this.download = null;
     }
 
     /** Set cross-controller references after all controllers are created. */
-    setCrossRefs(queue, editModal, transport, trackInfo, download) {
+    setCrossRefs(queue, editModal, transport, trackInfo, download, trackEdit) {
         this.queue = queue;
         this.editModal = editModal;
         this.transport = transport;
         this.trackInfo = trackInfo;
         this.download = download;
+        this.trackEdit = trackEdit;
     }
 
     /** Wire up context menu event listeners. */
@@ -166,7 +169,7 @@ export class PlaylistContextMenuController {
 
         let playlist_id = String(hub.playlistId || '').trim();
         if (row_el) {
-            playlist_id = String(hub.playlistId || '').trim();
+            playlist_id = String(row_el.getAttribute('data-playlist-id') || hub.playlistId || '').trim();
         } else {
             playlist_id = String(hub.playingPlaylistId || '').trim();
             if (!playlist_id && snap) {
@@ -284,6 +287,17 @@ export class PlaylistContextMenuController {
                     a.remove();
                 }, false);
             }
+            mkBtn('Edit details', () => {
+                if (this.trackEdit) {
+                    this.trackEdit.open(
+                        String(payload.playlistId),
+                        String(payload.trackId),
+                        payload.title || '',
+                        payload.artist || '',
+                        payload.album || '',
+                    );
+                }
+            }, false);
             mkBtn('Song info', () => {
                 if (this.trackInfo) {
                     this.trackInfo.open(String(payload.playlistId), String(payload.trackId));

@@ -336,3 +336,43 @@ def read_audio_file_stats(path: Path) -> dict[str, Any]:
         "bitrate_kbps": bitrate_kbps,
         "format": fmt,
     }
+
+
+def write_track_tags(path: Path, title: str, artist: str, album: str) -> bool:
+    """Write title/artist/album tags. Album may be empty (clears the tag)."""
+    suffix = path.suffix.lower()
+    title = (title or "").strip()
+    artist = (artist or "").strip()
+    album = (album or "").strip()
+    try:
+        if suffix == ".mp3":
+            from mutagen.id3 import ID3, ID3NoHeaderError, TALB, TIT2, TPE1
+
+            try:
+                tags = ID3(path)
+            except ID3NoHeaderError:
+                tags = ID3()
+            tags["TIT2"] = TIT2(encoding=3, text=title)
+            tags["TPE1"] = TPE1(encoding=3, text=artist)
+            if album:
+                tags["TALB"] = TALB(encoding=3, text=album)
+            else:
+                tags.delall("TALB")
+            tags.save(path)
+            return True
+        if suffix in (".m4a", ".mp4", ".m4b"):
+            from mutagen.mp4 import MP4
+
+            audio = MP4(path)
+            audio["\xa9nam"] = [title]
+            audio["\xa9ART"] = [artist]
+            if album:
+                audio["\xa9alb"] = [album]
+            else:
+                audio.pop("\xa9alb", None)
+                audio.pop("©alb", None)
+            audio.save()
+            return True
+    except Exception:
+        return False
+    return False

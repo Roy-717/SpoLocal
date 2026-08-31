@@ -126,6 +126,8 @@ export class PlaylistTransportController {
         });
         hub.audio.addEventListener('error', () => this.handleAudioElementError());
 
+        hub.audio.addEventListener('loadstart', () => this.release_stream_cache_for_src());
+
         hub.audio.addEventListener('stalled', () => this.scheduleStallRecoveryIfStillHung());
 
         document.addEventListener('visibilitychange', () => this.handleVisibilityForBackgroundPlayback());
@@ -1067,6 +1069,31 @@ export class PlaylistTransportController {
         }
     }
 
+    stream_vid_from_src(src) {
+        try {
+            const u = new URL(String(src || ''), window.location.href);
+            if (!u.pathname.startsWith('/api/stream')) return '';
+            return String(u.searchParams.get('vid') || '').trim();
+        } catch (e) {
+            return '';
+        }
+    }
+
+    release_stream_cache_for_src() {
+        const hub = this.state.hub;
+        if (!hub || !hub.audio) return;
+        const next = this.stream_vid_from_src(hub.audio.src || hub.audio.currentSrc || '');
+        const prev = String(hub._active_stream_vid || '').trim();
+        if (prev && prev !== next) {
+            fetch('/api/stream/release?vid=' + encodeURIComponent(prev), {
+                method: 'POST',
+                credentials: 'same-origin',
+                keepalive: true,
+            }).catch(() => {});
+        }
+        hub._active_stream_vid = next;
+    }
+
     isSearchStreamPlayback() {
         const hub = this.state.hub;
         return !!(hub && hub.searchStreamActive);
@@ -1350,6 +1377,11 @@ export class PlaylistTransportController {
     leave_search_stream() {
         const hub = this.state.hub;
         if (!hub.searchStreamActive && !hub.searchStreamHit) return;
+        if (typeof window.nextSpolocalStreamLoadGen === 'function') {
+            window.nextSpolocalStreamLoadGen();
+        } else {
+            hub._streamLoadGen = (hub._streamLoadGen || 0) + 1;
+        }
         hub.searchStreamActive = false;
         hub.searchStreamHit = null;
         if (typeof window.resetSpolocalSearchCards === 'function') {
@@ -1463,7 +1495,7 @@ export class PlaylistTransportController {
 
     trySoftReloadCurrentAudioSource() {
         const hub = this.state.hub;
-        if (this.isSearchStreamPlayback()) return false;
+        if (this.isSearchStreamPlayback() || this.isStreamingPlayback()) return false;
         const src = this.resolveCurrentPlaySrc();
         if (!src || !hub.currentTrackId) return false;
         hub._mediaDecodeRetries = (hub._mediaDecodeRetries || 0) + 1;
@@ -1555,7 +1587,7 @@ export class PlaylistTransportController {
 
     scheduleStallRecoveryIfStillHung() {
         const hub = this.state.hub;
-        if (this.isSearchStreamPlayback()) return;
+        if (this.isSearchStreamPlayback() || this.isStreamingPlayback()) return;
         if (this.stallRecoveryTimer) clearTimeout(this.stallRecoveryTimer);
         this.stallRecoveryTimer = setTimeout(() => {
             this.stallRecoveryTimer = null;

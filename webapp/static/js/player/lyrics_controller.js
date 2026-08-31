@@ -93,7 +93,6 @@ export class PlaylistLyricsController {
             const panel = hub.lyricsPanel;
             const t = e.target;
             if (!wrap || !t) return;
-            if (t.closest && t.closest('.lyrics-line')) return;
             if (wrap.contains(t) || (panel && panel.contains(t))) {
                 hub.lyricsUserScrollUntil = Date.now() + 2000;
                 this.stop_lyrics_scroll_anim();
@@ -282,13 +281,13 @@ export class PlaylistLyricsController {
                         hub.audio.play().catch(err => { if (this.transport) this.transport.handlePlayError(err); });
                     }
                 }
-                hub.lyricsUserScrollUntil = 0;
+                hub.lyricsUserScrollUntil = Date.now() + 2000;
                 const wrap = hub.lyricsViewWrap;
                 if (wrap) {
                     const wrap_rect = wrap.getBoundingClientRect();
                     const line_rect = line.getBoundingClientRect();
                     const delta = (line_rect.top + line_rect.height / 2) - (wrap_rect.top + wrap_rect.height / 2);
-                    this.animate_lyrics_wrap_scroll(wrap, wrap.scrollTop + delta);
+                    this.animate_lyrics_wrap_scroll(wrap, wrap.scrollTop + delta, true);
                 }
             });
             return line;
@@ -366,7 +365,7 @@ export class PlaylistLyricsController {
         }
     }
 
-    animate_lyrics_wrap_scroll(wrap, target_top) {
+    animate_lyrics_wrap_scroll(wrap, target_top, force) {
         const hub = this.state.hub;
         this.stop_lyrics_scroll_anim();
         const start = wrap.scrollTop;
@@ -375,7 +374,7 @@ export class PlaylistLyricsController {
         const dur = 480;
         const t0 = performance.now();
         const step = (now) => {
-            if (hub.lyricsUserScrollUntil && Date.now() < hub.lyricsUserScrollUntil) {
+            if (!force && hub.lyricsUserScrollUntil && Date.now() < hub.lyricsUserScrollUntil) {
                 hub._lyricsScrollAnim = 0;
                 return;
             }
@@ -606,6 +605,7 @@ export class PlaylistLyricsController {
             if (this.queue) this.queue.sync_queue_button_ui();
         }
         if (hub.lyricsVisible) {
+            if (typeof window.closeGlobalSearch === 'function') window.closeGlobalSearch();
             // Sync bottom edge with the player bar's actual height
             const playerBar = document.getElementById('player-bar');
             if (playerBar) {

@@ -26,8 +26,9 @@ from audio_quality import DEFAULT_KBPS, kbps_from_relpath, parse_quality_kbps, v
 from lyrics_files import delete_lyrics_sidecars, materialize_lyrics_file_if_needed
 from lyrics_fetch import fetch_lrclib_sidecar_sync, on_demand_lyrics_fetch_enabled
 from models import DownloadStatus, Playlist, Track, set_track_status_change_listener
-from tag_metadata import extract_album, extract_lyrics, read_audio_file_stats
+from tag_metadata import extract_album, extract_lyrics, read_audio_file_stats, write_track_tags
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from spotifydown_api import detect_spotify_url_type
 from spotify_scraper import (
@@ -720,9 +721,11 @@ class DownloadService:
         path = self.get_track_audio_path(playlist_id, track.id)
         if not path:
             return
-        from loudness_analysis import analyze_loudness_gain_db
-
-        gain = analyze_loudness_gain_db(path, self.root)
+        try:
+            from loudness_analysis import analyze_loudness_gain_db
+            gain = analyze_loudness_gain_db(path, self.root)
+        except Exception:
+            return
         if gain is not None:
             track.loudness_gain_db = gain
 
@@ -778,6 +781,92 @@ class DownloadService:
             "youtube_video_id": track.youtube_video_id or "",
             "error": track.error or "",
             "files": files,
+        }
+
+    def _track_audio_files(self, track: Track) -> List[Path]:
+        downloads_root = (self.root / "downloads").resolve()
+        rels: List[str] = []
+        if track.media_relpath:
+            rels.append(track.media_relpath)
+        for rel in (track.media_variants or {}).values():
+            if rel:
+                rels.append(rel)
+        out: List[Path] = []
+        seen: set[str] = set()
+        for rel in rels:
+            if rel in seen:
+                continue
+            seen.add(rel)
+            audio_path = (self.root / "downloads" / rel).resolve()
+            try:
+                if audio_path.is_file() and audio_path.is_relative_to(downloads_root):
+                    out.append(audio_path)
+            except (OSError, ValueError):
+                continue
+        return out
+
+    def update_track_details(
+        self,
+        playlist_id: str,
+        track_id: str,
+        title: str,
+        artist: str,
+        album: str,
+    ) -> Optional[dict]:
+        pl = self.get_playlist(playlist_id.strip())
+        if not pl:
+            return None
+        self.hydrate_media_paths(pl, persist=False)
+        track = pl.get_track(track_id.strip())
+        if not track:
+            return None
+        title_s = (title or "").strip()
+        if not title_s:
+            return None
+        artist_s = (artist or "").strip()
+        album_s = (album or "").strip()
+        album_val: Optional[str] = album_s or None
+
+        to_patch: List[Track] = [track]
+        if self.is_liked_songs_playlist(pl.id):
+            self._sync_liked_track_media_from_source(track)
+            src = self._liked_source_track(track)
+            if src:
+                to_patch.append(src)
+        else:
+            liked_pl = self.playlists.get(self.LIKED_SONGS_PLAYLIST_ID)
+            if liked_pl:
+                for liked in liked_pl.tracks:
+                    if (liked.liked_source_playlist_id or "").strip() == pl.id and (
+                        liked.liked_source_track_id or ""
+                    ).strip() == track.id:
+                        to_patch.append(liked)
+
+        seen_ids: set[str] = set()
+        unique_tracks: List[Track] = []
+        for t in to_patch:
+            if t.id in seen_ids:
+                continue
+            seen_ids.add(t.id)
+            t.title = title_s
+            t.artist = artist_s
+            t.album = album_val
+            unique_tracks.append(t)
+
+        seen_paths: set[Path] = set()
+        for t in unique_tracks:
+            for p in self._track_audio_files(t):
+                if p in seen_paths:
+                    continue
+                seen_paths.add(p)
+                write_track_tags(p, title_s, artist_s, album_s)
+
+        self._save_playlists()
+        return {
+            "id": track.id,
+            "title": title_s,
+            "artist": artist_s,
+            "album": album_s,
         }
 
     def get_lyrics_payload(self, playlist_id: str, track_id: str) -> dict:

@@ -18,7 +18,7 @@ import asyncio
 import httpx
 import yt_dlp as _yt_dlp
 
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
@@ -127,7 +127,8 @@ from spotify_scraper import search_youtube_tracks
 
 service = DownloadService(root)
 
-_PREVIEW_CACHE_TTL_SECONDS = 300
+# Keep the same googlevideo URL for the whole song. Refresh only on CDN 403.
+_PREVIEW_CACHE_TTL_SECONDS = 6 * 3600
 _PREVIEW_CACHE_MAX_ENTRIES = 2000
 _SEARCH_PREVIEW_LIMIT = 6
 _SEARCH_CACHE_MAX_RESULTS = 30
@@ -179,6 +180,20 @@ def _preview_cache_cleanup(now: float) -> None:
     items = sorted(_preview_cache.items(), key=lambda kv: kv[1][1])
     for vid, _ in items[:len(_preview_cache) - _PREVIEW_CACHE_MAX_ENTRIES]:
         _preview_cache.pop(vid, None)
+
+
+def _release_preview_cache(video_id: Optional[str] = None) -> None:
+    if video_id:
+        _preview_cache.pop(video_id.strip(), None)
+        return
+    _preview_cache.clear()
+
+
+def _keep_preview_cache_only(video_id: str) -> None:
+    keep = video_id.strip()
+    for vid in list(_preview_cache.keys()):
+        if vid != keep:
+            _preview_cache.pop(vid, None)
 
 
 def _recommendation_cache_cleanup(now: float) -> None:
@@ -248,7 +263,7 @@ def _fmt_chapter_clock(time_ms: int) -> str:
 
 
 class YoutubeCdnAudio:
-    SLICE_BYTES = 512 * 1024
+    SLICE_BYTES = 2 * 1024 * 1024
 
     def __init__(
         self,
@@ -605,8 +620,35 @@ class YoutubeStreamProxy:
             proxied = await self._try_cdn_proxy(method, source, range_header)
             if proxied is not None:
                 return proxied
-        _stream_log.warning("cdn give up vid=%s", self.video_id)
-        raise HTTPException(status_code=502, detail="Could not stream audio")
+        start = 0
+        if range_header:
+            text = range_header.strip()
+            if text.lower().startswith("bytes="):
+                left = text.split("=", 1)[1].split(",", 1)[0].split("-", 1)[0].strip()
+                try:
+                    start = int(left) if left else 0
+                except ValueError:
+                    start = 0
+        if start > 0:
+            _stream_log.warning("cdn give up vid=%s range_start=%s, no ytdlp pipe", self.video_id, start)
+            raise HTTPException(status_code=503, detail="Stream range unavailable")
+        _stream_log.warning("cdn give up vid=%s, ytdlp pipe", self.video_id)
+        return await self._ytdlp_pipe_response()
+
+    async def _ytdlp_pipe_response(self) -> StreamingResponse:
+        async def generate() -> AsyncIterator[bytes]:
+            async for chunk in _stream_ytdlp_audio_or_502(self.video_id):
+                yield chunk
+
+        return StreamingResponse(
+            generate(),
+            media_type="audio/webm",
+            headers={
+                "Accept-Ranges": "none",
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
 
 async def _stream_ytdlp_audio_or_502(
@@ -857,6 +899,12 @@ class TrackLikeBody(BaseModel):
     liked: bool
 
 
+class TrackDetailsBody(BaseModel):
+    title: str = Field(..., min_length=1, max_length=300)
+    artist: str = Field("", max_length=300)
+    album: str = Field("", max_length=300)
+
+
 @app.post("/api/track/like")
 async def api_track_like(body: TrackLikeBody):
     ok = service.set_track_liked(body.source_playlist_id.strip(), body.source_track_id.strip(), body.liked)
@@ -876,9 +924,27 @@ async def api_track_info(playlist_id: str, track_id: str):
     return JSONResponse(info)
 
 
+@app.post("/api/playlists/{playlist_id}/tracks/{track_id}/details")
+async def api_track_details(playlist_id: str, track_id: str, body: TrackDetailsBody):
+    updated = await asyncio.to_thread(
+        service.update_track_details,
+        playlist_id,
+        track_id,
+        body.title,
+        body.artist,
+        body.album,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Track not found")
+    return JSONResponse({"ok": True, **updated})
+
+
 @app.get("/api/playlists/{playlist_id}/tracks/{track_id}/loudness-gain")
 async def api_track_loudness_gain(playlist_id: str, track_id: str):
-    gain = await asyncio.to_thread(service.ensure_track_loudness_gain, playlist_id, track_id)
+    try:
+        gain = await asyncio.to_thread(service.ensure_track_loudness_gain, playlist_id, track_id)
+    except Exception:
+        return JSONResponse({"loudness_gain_db": None})
     if gain is None:
         pl = service.get_playlist(playlist_id.strip())
         if not pl or not pl.get_track(track_id.strip()):
@@ -1009,7 +1075,7 @@ async def api_playlist_recommendations(playlist_id: str, limit: int = 12):
 
 
 @app.get("/api/search/songs")
-async def api_search_songs(q: str = "", limit: int = 30, offset: int = 0):
+async def api_search_songs(q: str = "", limit: int = 30, offset: int = 0, fresh: int = 0):
     q = (q or "").strip()
     if len(q) < 2:
         raise HTTPException(status_code=400, detail="Query must be at least 2 characters.")
@@ -1028,6 +1094,8 @@ async def api_search_songs(q: str = "", limit: int = 30, offset: int = 0):
 
     async with _search_cache_lock:
         _search_cache_cleanup(now)
+        if fresh:
+            _search_cache.pop(cache_key, None)
         cached = _search_cache.get(cache_key)
         if cached is not None:
             hits_cache = cached[0]
@@ -1091,12 +1159,27 @@ async def api_stream_chapters(vid: str):
     )
 
 
+@app.post("/api/stream/release")
+async def api_stream_release(vid: Optional[str] = Query(None)):
+    if vid:
+        if not vid.replace("-", "").replace("_", "").isalnum():
+            raise HTTPException(status_code=400, detail="Invalid video id")
+        _release_preview_cache(vid.strip())
+    else:
+        _release_preview_cache(None)
+    return JSONResponse({"ok": True})
+
+
 @app.api_route("/api/stream", methods=["GET", "HEAD"])
-async def api_stream(request: Request, vid: str):
+async def api_stream(request: Request, vid: str, fresh: int = 0):
     """Proxy YouTube audio with Range so the player buffers/seeks like YouTube."""
     if not vid or not vid.replace("-", "").replace("_", "").isalnum():
         raise HTTPException(status_code=400, detail="Invalid video id")
-    return await YoutubeStreamProxy(vid.strip()).response_for(request)
+    vid = vid.strip()
+    if fresh:
+        _preview_cache.pop(vid, None)
+    _keep_preview_cache_only(vid)
+    return await YoutubeStreamProxy(vid).response_for(request)
 
 
 @app.post("/playlists")

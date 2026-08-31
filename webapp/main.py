@@ -35,12 +35,13 @@ from starlette.staticfiles import NotModifiedResponse, StaticFiles
 
 from pydantic import BaseModel, Field
 
-from download_service import DownloadService, youtube_video_id_from_url
+from lyrics_fetch import fetch_lrclib_sidecar_sync
 from models import Playlist, Track, track_play_variants
+from download_service import DownloadService
 from tag_metadata import extract_cover
 from cover_image import DEFAULT_JPEG_QUALITY, DEFAULT_THUMB_MAX_SIDE, square_thumb_jpeg
 from audio_quality import ytdlp_stream_cmd as _ytdlp_audio_cmd
-from audio_quality import ytdlp_youtube_opts
+from audio_quality import ytdlp_video_format, ytdlp_youtube_opts, parse_quality_kbps, video_height_for_kbps
 
 
 def _youtube_video_id_from_track_metadata(artist: str, title: str) -> Optional[str]:
@@ -136,6 +137,8 @@ _SEARCH_CACHE_TTL_SECONDS = 180
 _SEARCH_CACHE_MAX_ENTRIES = 20
 _preview_cache: dict[str, tuple[YoutubeCdnAudio, float]] = {}
 _preview_inflight: dict[str, asyncio.Task[YoutubeCdnAudio]] = {}
+_video_cache: dict[str, tuple[YoutubeCdnAudio, float]] = {}
+_video_inflight: dict[str, asyncio.Task[YoutubeCdnAudio]] = {}
 _search_cache: dict[str, tuple[list[dict[str, Any]], float]] = {}
 _search_cache_lock = asyncio.Lock()
 _recommendation_cache: dict[str, tuple[list[dict[str, Any]], float]] = {}
@@ -184,9 +187,14 @@ def _preview_cache_cleanup(now: float) -> None:
 
 def _release_preview_cache(video_id: Optional[str] = None) -> None:
     if video_id:
-        _preview_cache.pop(video_id.strip(), None)
+        vid = video_id.strip()
+        _preview_cache.pop(vid, None)
+        for key in list(_video_cache.keys()):
+            if key.startswith(vid + ":"):
+                _video_cache.pop(key, None)
         return
     _preview_cache.clear()
+    _video_cache.clear()
 
 
 def _keep_preview_cache_only(video_id: str) -> None:
@@ -217,7 +225,7 @@ def _stream_play_src_for_video_id(video_id: str) -> str:
 
 
 def _stream_play_src_for_track(t: Track) -> Optional[str]:
-    vid = (t.youtube_video_id or "").strip() or youtube_video_id_from_url(t.url)
+    vid = t.resolved_youtube_video_id()
     if not vid:
         return None
     return _stream_play_src_for_video_id(vid)
@@ -428,10 +436,11 @@ def _url_with_byte_range(url: str, start: int, end: int) -> str:
 
 
 class YoutubeStreamProxy:
-    """Same-origin proxy of YouTube's audio URL so the browser can Range-buffer like YouTube."""
+    """Same-origin proxy of YouTube's audio/video URL so the browser can Range-buffer."""
 
-    def __init__(self, video_id: str):
+    def __init__(self, video_id: str, *, height: Optional[int] = None):
         self.video_id = video_id
+        self.height = height
 
     def _media_type(self, ext: str, content_type: Optional[str]) -> str:
         if content_type and "html" not in content_type.lower():
@@ -609,9 +618,16 @@ class YoutubeStreamProxy:
         range_header = request.headers.get("range")
         for attempt in range(2):
             if attempt:
-                _preview_cache.pop(self.video_id, None)
+                if self.height:
+                    _video_cache.pop(f"{self.video_id}:{int(self.height)}", None)
+                else:
+                    _preview_cache.pop(self.video_id, None)
             try:
-                source = await _get_preview_payload(self.video_id)
+                source = (
+                    await _get_video_payload(self.video_id, self.height)
+                    if self.height
+                    else await _get_preview_payload(self.video_id)
+                )
             except ValueError as exc:
                 _stream_log.warning("cdn extract fail vid=%s err=%s", self.video_id, exc)
                 break
@@ -632,6 +648,8 @@ class YoutubeStreamProxy:
         if start > 0:
             _stream_log.warning("cdn give up vid=%s range_start=%s, no ytdlp pipe", self.video_id, start)
             raise HTTPException(status_code=503, detail="Stream range unavailable")
+        if self.height:
+            raise HTTPException(status_code=502, detail="Video stream unavailable")
         _stream_log.warning("cdn give up vid=%s, ytdlp pipe", self.video_id)
         return await self._ytdlp_pipe_response()
 
@@ -696,13 +714,16 @@ async def _stream_ytdlp_audio_or_502(
 def _extract_preview_payload(video_id: str) -> YoutubeCdnAudio:
     url_yt = f"https://www.youtube.com/watch?v={video_id}"
     opts: dict[str, Any] = {
-        "format": "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
+        "format": "bestaudio/best",
         "quiet": True,
         "no_warnings": True,
     }
     opts.update(ytdlp_youtube_opts())
-    with _yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url_yt, download=False)
+    try:
+        with _yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url_yt, download=False)
+    except Exception as exc:
+        raise ValueError(str(exc)) from exc
     if not info:
         raise ValueError("No info returned by yt-dlp")
     raw_url = str(info.get("url") or "")
@@ -754,6 +775,73 @@ async def _get_preview_payload(video_id: str) -> YoutubeCdnAudio:
             _preview_inflight.pop(video_id, None)
 
 
+def _video_fmt_url(info: dict[str, Any]) -> tuple[str, str, Optional[int], dict[str, str]]:
+    fmt = info
+    req = info.get("requested_formats")
+    if isinstance(req, list) and req:
+        picked = next(
+            (row for row in req if isinstance(row, dict) and str(row.get("vcodec") or "none") != "none"),
+            req[0],
+        )
+        if isinstance(picked, dict):
+            fmt = picked
+    raw_url = str(fmt.get("url") or info.get("url") or "")
+    filesize = _clen_from_url(raw_url) or _int_or_none(fmt.get("filesize")) or _int_or_none(fmt.get("filesize_approx"))
+    headers = {
+        str(k): str(v)
+        for k, v in (fmt.get("http_headers") or info.get("http_headers") or {}).items()
+        if isinstance(k, str) and isinstance(v, str)
+    }
+    ext = str(fmt.get("ext") or info.get("ext") or "mp4")
+    return raw_url, ext, filesize, headers
+
+
+def _extract_video_payload(video_id: str, height: int) -> YoutubeCdnAudio:
+    url_yt = f"https://www.youtube.com/watch?v={video_id}"
+    opts: dict[str, Any] = {
+        "format": ytdlp_video_format(height),
+        "quiet": True,
+        "no_warnings": True,
+    }
+    opts.update(ytdlp_youtube_opts())
+    try:
+        with _yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url_yt, download=False)
+    except Exception as exc:
+        raise ValueError(str(exc)) from exc
+    if not info:
+        raise ValueError("No info returned by yt-dlp")
+    raw_url, ext, filesize, headers = _video_fmt_url(info)
+    if not raw_url:
+        raise ValueError("No video stream URL from yt-dlp")
+    return YoutubeCdnAudio(url=raw_url, headers=headers, ext=ext, filesize=filesize, chapters=[])
+
+
+async def _get_video_payload(video_id: str, height: int) -> YoutubeCdnAudio:
+    key = f"{video_id}:{int(height)}"
+    now = _now_ts()
+    entry = _video_cache.get(key)
+    if entry is not None and entry[1] > now:
+        return entry[0]
+    pending = _video_inflight.get(key)
+    if pending is None:
+        async def _load() -> YoutubeCdnAudio:
+            source = await asyncio.get_running_loop().run_in_executor(
+                None, _extract_video_payload, video_id, int(height)
+            )
+            _video_cache[key] = (source, _now_ts() + _PREVIEW_CACHE_TTL_SECONDS)
+            return source
+
+        task = asyncio.create_task(_load())
+        _video_inflight[key] = task
+        pending = task
+    try:
+        return await pending
+    finally:
+        if _video_inflight.get(key) is pending:
+            _video_inflight.pop(key, None)
+
+
 async def _annotate_search_stream_src(hits: list[dict[str, Any]]) -> None:
     """Attach same-origin stream URLs; never expose YouTube CDN URLs to the browser."""
     for hit in hits:
@@ -762,6 +850,15 @@ async def _annotate_search_stream_src(hits: list[dict[str, Any]]) -> None:
         vid = hit.get("video_id")
         if isinstance(vid, str) and vid.strip():
             hit["stream_src"] = _stream_play_src_for_video_id(vid.strip())
+
+
+def _annotate_library_matches(hits: list[dict[str, Any]]) -> None:
+    for hit in hits:
+        hit["library_matches"] = service.library_matches_for_hit(
+            str(hit.get("video_id") or ""),
+            str(hit.get("title") or ""),
+            str(hit.get("artist") or hit.get("channel") or ""),
+        )
 _cover_tile_cache_dir = _webapp_dir / "static" / "cover_tiles"
 # Small on-disk / on-the-wire JPEGs so the browser does not decode huge album art for tiny UI tiles.
 _COVER_THUMB_MAX_SIDE = DEFAULT_THUMB_MAX_SIDE
@@ -783,7 +880,7 @@ def _track_payload_row(t: Track, *, playback_quality: Optional[str] = None) -> d
         "play_variants": variants,
         "status": st,
         "url": t.url or "",
-        "youtube_video_id": t.youtube_video_id or "",
+        "youtube_video_id": t.resolved_youtube_video_id(),
         "error": t.error or "",
         "loudness_gain_db": t.loudness_gain_db,
     }
@@ -829,7 +926,7 @@ def _library_pool_payload() -> list[dict[str, Any]]:
                     "play_src": src,
                     "play_variants": variants,
                     "url": t.url or "",
-                    "youtube_video_id": t.youtube_video_id or "",
+                    "youtube_video_id": t.resolved_youtube_video_id(),
                 }
             )
     return pool
@@ -957,6 +1054,7 @@ async def api_playlist_state(playlist_id: str):
     pl = service.get_playlist(playlist_id.strip())
     if not pl:
         raise HTTPException(status_code=404, detail="Playlist not found")
+    await asyncio.to_thread(service.hydrate_media_paths, pl, fill_albums=False, persist=False)
     return JSONResponse(
         {
             "playlist_id": pl.id,
@@ -1066,11 +1164,12 @@ async def api_playlist_recommendations(playlist_id: str, limit: int = 12):
         vid = h.get("video_id")
         if isinstance(vid, str) and vid in existing_ids:
             continue
-        out.append(h)
+        out.append(dict(h))
         if len(out) >= lim:
             break
 
     await _annotate_search_stream_src(out)
+    _annotate_library_matches(out)
     return JSONResponse(out)
 
 
@@ -1107,9 +1206,10 @@ async def api_search_songs(q: str = "", limit: int = 30, offset: int = 0, fresh:
 
     start = min(offset, len(hits_cache))
     end = min(start + limit, len(hits_cache))
-    hits = hits_cache[start:end]
+    hits = [dict(h) for h in hits_cache[start:end]]
     if hits:
         await _annotate_search_stream_src(hits)
+        _annotate_library_matches(hits)
 
     return JSONResponse(
         {
@@ -1159,6 +1259,21 @@ async def api_stream_chapters(vid: str):
     )
 
 
+@app.get("/api/stream/lyrics")
+async def api_stream_lyrics(title: str = "", artist: str = ""):
+    """Same LRCLIB lookup as after a download; nothing is written to disk."""
+    from lyrics_files import payload_from_remote_lyrics
+
+    artist_s = (artist or "").strip()
+    title_s = (title or "").strip()
+    if not title_s:
+        raise HTTPException(status_code=400, detail="Title is required")
+    plain, synced = await asyncio.to_thread(fetch_lrclib_sidecar_sync, artist_s, title_s)
+    payload = payload_from_remote_lyrics(plain, synced)
+    payload["readonly"] = True
+    return JSONResponse(payload)
+
+
 @app.post("/api/stream/release")
 async def api_stream_release(vid: Optional[str] = Query(None)):
     if vid:
@@ -1180,6 +1295,33 @@ async def api_stream(request: Request, vid: str, fresh: int = 0):
         _preview_cache.pop(vid, None)
     _keep_preview_cache_only(vid)
     return await YoutubeStreamProxy(vid).response_for(request)
+
+
+@app.get("/api/stream/video/prepare")
+async def api_stream_video_prepare(vid: str, height: int = 0, kbps: int = 0):
+    """Resolve the DASH URL only. No media bytes until /api/stream/video."""
+    if not vid or not vid.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(status_code=400, detail="Invalid video id")
+    vid = vid.strip()
+    h = height if height in (360, 480, 720) else video_height_for_kbps(parse_quality_kbps(kbps))
+    try:
+        await _get_video_payload(vid, h)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JSONResponse({"ok": True})
+
+
+@app.api_route("/api/stream/video", methods=["GET", "HEAD"])
+async def api_stream_video(request: Request, vid: str, height: int = 0, kbps: int = 0):
+    """DASH/progressive video-only proxy. Loads only when the lyrics pane requests it."""
+    if not vid or not vid.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(status_code=400, detail="Invalid video id")
+    vid = vid.strip()
+    if height in (360, 480, 720):
+        h = height
+    else:
+        h = video_height_for_kbps(parse_quality_kbps(kbps))
+    return await YoutubeStreamProxy(vid, height=h).response_for(request)
 
 
 @app.post("/playlists")

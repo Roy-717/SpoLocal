@@ -14,4 +14,5 @@ session.bootstrap();
 // Expose transport methods through hub for global access
 hub.resolveCurrentPlaySrc = () => session.transport.resolveCurrentPlaySrc();
 hub.setPlayUi = (playing) => session.transport.setPlayUi(playing);
+hub.playLibraryEntry = (entry) => session.transport.playLibraryEntry(entry);
 PlaylistColumnResizer.init();

@@ -141,6 +141,10 @@ export class PlaylistSessionController {
 
     async goToPlayingTrack() {
         const hub = this.state.hub;
+        this.hideLyricsIfOpen();
+        if (hub.queueVisible && this.queue) this.queue.toggleQueue();
+        if (typeof window.closeGlobalSearch === 'function') window.closeGlobalSearch();
+        if (this.settings) this.settings.close();
         const track_id = hub.currentTrackId;
         if (!track_id) return;
 
@@ -223,6 +227,13 @@ export class PlaylistSessionController {
         hub.lyricsEmptyHint = document.getElementById('lyrics-empty-hint');
         hub.lyricsNoAudioHint = document.getElementById('lyrics-no-audio-hint');
         hub.lyricsViewWrap = document.getElementById('lyrics-view-wrap');
+        hub.lyricsReadRow = document.getElementById('lyrics-read-row');
+        hub.lyricsVideoPane = document.getElementById('lyrics-video-pane');
+        hub.lyricsVideoLoad = document.getElementById('lyrics-video-load');
+        hub.lyricsVideoHide = document.getElementById('lyrics-video-hide');
+        hub.lyricsVideoFs = document.getElementById('lyrics-video-fs');
+        hub.lyricsVideoStack = document.getElementById('lyrics-video-stack');
+        hub.lyricsVideoEl = document.getElementById('lyrics-video');
         hub.lyricsEditWrap = document.getElementById('lyrics-edit-wrap');
         hub.lyricsEditor = document.getElementById('lyrics-editor');
         hub.lyricsEditDisabled = document.getElementById('lyrics-edit-disabled');

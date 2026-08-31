@@ -82,11 +82,30 @@ def kbps_from_relpath(relpath: str | None) -> int | None:
         return None
 
 
+def ytdlp_video_format(height: int) -> str:
+    h = 360 if height <= 360 else 480 if height <= 480 else 720
+    return (
+        f"bestvideo[vcodec^=avc1][height<={h}]/"
+        f"bestvideo[vcodec^=avc][height<={h}]/"
+        f"bestvideo[ext=mp4][height<={h}]/"
+        f"bestvideo[height<={h}]"
+    )
+
+
+def video_height_for_kbps(kbps: int) -> int:
+    k = snap_kbps(kbps)
+    if k <= QUALITY_LOW_KBPS:
+        return 360
+    if k <= QUALITY_MID_KBPS:
+        return 480
+    return 720
+
+
 def ytdlp_youtube_opts() -> dict[str, Any]:
     opts: dict[str, Any] = {
         "force_ipv4": True,
         "extractor_args": {
-            "youtube": {"player_client": ["web_embedded", "android_vr"]},
+            "youtube": {"player_client": ["android", "web", "web_embedded", "ios", "android_vr"]},
         },
     }
     deno = shutil.which("deno")
@@ -107,7 +126,7 @@ def ytdlp_stream_cmd(video_id: str, *, max_seconds: Optional[int] = None) -> lis
         "--no-warnings",
         "--force-ipv4",
         "--extractor-args",
-        "youtube:player_client=web_embedded,android_vr",
+        "youtube:player_client=android,web,web_embedded,ios,android_vr",
     ]
     deno = shutil.which("deno")
     if deno:

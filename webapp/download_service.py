@@ -1088,6 +1088,50 @@ class DownloadService:
             key=lambda p: (0 if p.id == self.LIKED_SONGS_PLAYLIST_ID else 1, (p.name or "").lower()),
         )
 
+    @staticmethod
+    def _norm_meta(text: str) -> str:
+        return " ".join((text or "").casefold().split())
+
+    def library_matches_for_hit(self, video_id: str, title: str, artist: str) -> List[dict]:
+        """Playlists/tracks that are the same YouTube id or the same title+artist."""
+        vid = (video_id or "").strip()
+        want_title = self._norm_meta(title)
+        want_artist = self._norm_meta(artist)
+        rows: List[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for pl in self.list_playlists():
+            self.hydrate_media_paths(pl, persist=False)
+            for t in pl.tracks:
+                tvid = self._youtube_video_id_for_track(t)
+                same_vid = bool(vid and tvid and vid == tvid)
+                same_meta = bool(
+                    want_title
+                    and want_artist
+                    and self._norm_meta(t.title) == want_title
+                    and self._norm_meta(t.artist) == want_artist
+                )
+                if not same_vid and not same_meta:
+                    continue
+                key = (pl.id, t.id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(
+                    {
+                        "playlist_id": pl.id,
+                        "playlist_name": pl.name or "",
+                        "track_id": t.id,
+                        "title": t.title or "",
+                        "artist": t.artist or "",
+                        "album": t.album or "",
+                        "url": t.url or "",
+                        "youtube_video_id": tvid or "",
+                        "play_src": t.play_src() or "",
+                        "play_variants": dict(t.play_variants() or {}),
+                    }
+                )
+        return rows
+
     def downloads_remaining_count(self) -> int:
         """How many downloads are still in the pipeline (queued, running, or supplementary)."""
         pipeline = self.job_queue.qsize() + len(self.progress)

@@ -108,6 +108,38 @@ def parse_lrc_lines(raw: str) -> list:
     return unique
 
 
+def payload_from_remote_lyrics(plain: Optional[str], synced: Optional[str]) -> dict:
+    """Display payload matching a downloaded track after LRCLIB materialize."""
+    from lyrics_text import filter_real_lyrics
+
+    lyrics = ""
+    source = "none"
+    lrc_data = None
+    lrc_raw = None
+    if synced and str(synced).strip():
+        parsed = parse_lrc_lines(synced)
+        if parsed:
+            lrc_data = parsed
+            lrc_raw = synced
+            lyrics = "\n".join(str(row.get("text") or "") for row in parsed)
+            source = "lrc"
+        else:
+            lyrics = filter_real_lyrics(synced) or ""
+            if lyrics:
+                source = "file"
+    if not lyrics and plain:
+        lyrics = filter_real_lyrics(plain) or ""
+        if lyrics:
+            source = "file"
+    return {
+        "lyrics": lyrics or "",
+        "source": source,
+        "has_audio": True,
+        "lrc_data": lrc_data,
+        "lrc_raw": lrc_raw,
+    }
+
+
 def save_user_lyrics(audio_path: Path, text: str) -> None:
     """Write or remove {stem}.lyrics.txt (UTF-8)."""
     path = user_lyrics_path(audio_path)

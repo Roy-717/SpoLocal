@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="/static/app.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script>window.__likedPlaylistId = {{ liked_playlist_id | tojson }};</script>
-    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=2">
+    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=14">
 </head>
 <body class="font-sans h-screen flex flex-col overflow-hidden">
     <!-- Top bar -->
@@ -400,7 +400,7 @@
          class="hidden fixed left-0 right-0 top-16 lg:left-[20rem] lg:right-[20rem] z-[35] flex flex-col border-t border-[#282828] shadow-[0_-8px_32px_rgba(0,0,0,0.5)]"
          style="background-color: #121212;">
         <div class="lyrics-panel-inner w-full flex flex-col min-h-0 flex-1">
-            <div class="flex items-center justify-between gap-3 mb-3 shrink-0">
+            <div class="lyrics-panel-header flex items-center justify-between gap-3 shrink-0">
                 <div class="flex items-center gap-3 min-w-0">
                     <span id="lyrics-title" class="text-xs font-semibold uppercase tracking-wider shrink-0">Lyrics</span>
                 </div>
@@ -411,6 +411,7 @@
                     </div>
                 </div>
             </div>
+            <div id="lyrics-read-row" class="flex-1 min-h-0">
             <div id="lyrics-view-wrap" class="flex-1 min-h-0 overflow-y-auto pr-1">
                 <p id="lyrics-empty-hint" class="hidden text-sm text-center py-8 leading-relaxed opacity-70">
                     No lyrics file yet. After the track is downloaded you can paste your own lyrics in <strong>Edit</strong>, or add a <code class="text-[#1DB954]">.lrc</code> / <code class="text-[#1DB954]">.lyrics.txt</code> next to the audio file.
@@ -419,6 +420,19 @@
                     Lyrics are saved next to the audio file. Finish downloading this track, then open <strong>Edit</strong> to add lyrics.
                 </p>
                 <pre id="lyrics-body" class="whitespace-pre-wrap font-sans text-sm leading-relaxed pb-2 transition-colors duration-300"></pre>
+            </div>
+            <div id="lyrics-video-pane" class="hidden shrink-0">
+                <div class="lyrics-video-stack" id="lyrics-video-stack">
+                    <button type="button" id="lyrics-video-load" class="lyrics-video-load">
+                        <span>Click to load video</span>
+                    </button>
+                    <video id="lyrics-video" class="hidden lyrics-video-el" muted playsinline preload="none"></video>
+                    <button type="button" id="lyrics-video-hide" class="lyrics-video-hide hidden">Hide video</button>
+                    <button type="button" id="lyrics-video-fs" class="lyrics-video-fs hidden" title="Full screen" aria-label="Full screen">
+                        <i class="fa-solid fa-expand" aria-hidden="true"></i>
+                    </button>
+                </div>
+            </div>
             </div>
             <div id="lyrics-edit-wrap" class="hidden flex-1 min-h-0 flex flex-col gap-2 pb-2">
                 <p id="lyrics-edit-disabled" class="hidden text-xs text-center py-2 opacity-60">Download the track to enable saving.</p>
@@ -556,8 +570,8 @@
     <script type="application/json" id="spolocal-player-boot">{{ {"playlistId": current.id if current else none, "isHome": is_home|default(false), "libraryPool": home_library_pool|default([], true), "catalog": playlist_catalog|default([], true)} | tojson | safe }}</script>
     <script src="/static/js/audio_quality_prefs.js?v=3"></script>
     <script src="/static/js/audio_normalization_prefs.js?v=3"></script>
-    <script type="module" src="/static/js/PlaylistSession.mjs?v=18"></script>
+    <script type="module" src="/static/js/PlaylistSession.mjs?v=59"></script>
     <script type="module" src="/static/pwa/pwa-entry.js"></script>
-    <script src="/static/js/spolocal_chrome.js?v=15" defer></script>
+    <script src="/static/js/spolocal_chrome.js?v=19" defer></script>
 </body>
 </html>

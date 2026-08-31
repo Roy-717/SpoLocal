@@ -37,6 +37,8 @@ export class PlaylistTransportController {
         this.loadTransportPrefs();
         if (typeof this.load_volume_pref === 'function') this.load_volume_pref();
 
+        document.addEventListener('keydown', (e) => this.on_space_play_pause(e));
+
         // Seek wiring
         if (hub.seek) {
             hub.seek.addEventListener('input', () => {
@@ -45,9 +47,11 @@ export class PlaylistTransportController {
                     hub.timeEl.textContent = this.fmt(Math.floor((parseFloat(hub.seek.value) / 1000) * hub.audio.duration));
                 }
                 this.sync_seek_buffer_ui();
+                if (this.lyrics) this.lyrics.sync_stream_video_clock(true);
             });
             hub.seek.addEventListener('change', () => {
                 this.seek_to_time_from_slider();
+                if (this.lyrics) this.lyrics.sync_stream_video_clock(true);
             });
         }
 
@@ -171,6 +175,7 @@ export class PlaylistTransportController {
                 }, 100);
             }
             this.sync_seek_buffer_ui();
+            if (this.lyrics) this.lyrics.sync_stream_video_clock();
         });
 
         hub.audio.addEventListener('progress', () => this.sync_seek_buffer_ui());
@@ -399,12 +404,10 @@ export class PlaylistTransportController {
     async playLibraryEntry(entry) {
         const hub = this.state.hub;
         if (!hub.audio || !entry) return;
-        const prefs = window.SpolocalQualityPrefs;
-        const preliminarySrc = prefs ? prefs.resolvePlaySrc(entry) : entry.play_src;
-        if (!preliminarySrc) return;
         const trackId = String(entry.track_id || '');
         const playlistId = String(entry.playlist_id || '');
         if (!trackId || !playlistId) return;
+        const prefs = window.SpolocalQualityPrefs;
 
         if (hub.currentTrackId === trackId && hub.playingPlaylistId === playlistId && hub.audio.src) {
             if (hub.audio.paused) hub.audio.play().catch((err) => this.handlePlayError(err));
@@ -413,36 +416,58 @@ export class PlaylistTransportController {
             return;
         }
 
+        let packed = Object.assign({}, entry);
+        let preliminarySrc = prefs ? prefs.resolvePlaySrc(packed) : (packed.play_src || '');
+        if (!preliminarySrc || (prefs && !prefs.normalizeMediaPath(preliminarySrc))) {
+            const row = await this.fetchTrackPayload(playlistId, trackId);
+            if (row) {
+                this.patchTrackInHub(row);
+                packed = Object.assign({}, packed, row, { playlist_id: playlistId, track_id: trackId });
+                preliminarySrc = prefs ? prefs.resolvePlaySrc(packed) : (packed.play_src || '');
+            }
+        }
+        if (!preliminarySrc) return;
+
+        this.leave_search_stream();
+
         this._playGeneration = (this._playGeneration || 0) + 1;
         const playGen = this._playGeneration;
         const playback_q = prefs ? String(prefs.playbackKbps()) : '192';
 
         let t = {
             id: trackId,
-            title: entry.title || '',
-            artist: entry.artist || '',
-            album: entry.album || '',
-            play_src: entry.play_src,
-            play_variants: entry.play_variants || {},
-            url: entry.url || '',
-            youtube_video_id: entry.youtube_video_id || '',
+            title: packed.title || '',
+            artist: packed.artist || '',
+            album: packed.album || '',
+            play_src: packed.play_src,
+            play_variants: packed.play_variants || {},
+            url: packed.url || '',
+            youtube_video_id: packed.youtube_video_id || '',
         };
 
         hub.titleEl.textContent = t.title || '—';
         hub.subEl.textContent = t.artist || '—';
 
         if (prefs && !prefs.hasVariant(t, playback_q)) {
-            const ready = await this.ensurePlaybackVariantReady(t, playlistId, trackId, playback_q, playGen);
-            if (playGen !== this._playGeneration) return;
-            if (!ready) return;
-            const row = await this.fetchTrackPayload(playlistId, trackId);
-            if (row) {
-                this.patchTrackInHub(row);
-                t = row;
+            const local_src = prefs.resolvePlaySrc(t);
+            const has_local = !!(local_src && prefs.normalizeMediaPath(local_src));
+            if (!has_local) {
+                const ready = await this.ensurePlaybackVariantReady(t, playlistId, trackId, playback_q, playGen);
+                if (playGen !== this._playGeneration) return;
+                if (!ready) return;
+                const row = await this.fetchTrackPayload(playlistId, trackId);
+                if (row) {
+                    this.patchTrackInHub(row);
+                    t = row;
+                }
             }
         }
 
-        const playSrc = prefs ? prefs.resolvePlaybackPlaySrc(t, playback_q) : (t.play_src || preliminarySrc);
+        const local_src = prefs ? prefs.resolvePlaySrc(t) : (t.play_src || preliminarySrc);
+        const has_local = !!(prefs && local_src && prefs.normalizeMediaPath(local_src));
+        const playSrc = has_local
+            ? (prefs.resolveExactPlaySrc(t, playback_q) || local_src)
+            : (prefs ? prefs.resolvePlaybackPlaySrc(t, playback_q) : (t.play_src || preliminarySrc));
         if (!playSrc) return;
 
         if (hub.pendingRestoreOnMeta) {
@@ -756,6 +781,25 @@ export class PlaylistTransportController {
         if (hub.audio.duration) {
             hub.audio.currentTime = (parseFloat(hub.seek.value) / 1000) * hub.audio.duration;
         }
+        if (this.lyrics) this.lyrics.sync_stream_video_clock(true);
+    }
+
+    space_is_typing_target(el) {
+        if (!el || el === document.body || el === document.documentElement) return false;
+        const tag = String(el.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+        if (el.isContentEditable) return true;
+        if (typeof el.closest === 'function' && el.closest('[contenteditable="true"]')) return true;
+        return false;
+    }
+
+    on_space_play_pause(e) {
+        if (e.key !== ' ' && e.key !== 'Spacebar' && e.code !== 'Space') return;
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.repeat) return;
+        if (this.space_is_typing_target(e.target)) return;
+        e.preventDefault();
+        this.toggle_main_play();
     }
 
     toggle_main_play() {
@@ -1335,6 +1379,7 @@ export class PlaylistTransportController {
 
     async onPlaybackQualityChanged() {
         const hub = this.state.hub;
+        if (this.lyrics) this.lyrics.reload_stream_video_if_loaded();
         if (!hub.currentTrackId) return;
         const prefs = window.SpolocalQualityPrefs;
         const playback_q = prefs ? String(prefs.playbackKbps()) : '192';

@@ -7,11 +7,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import quote
 from uuid import uuid4
+import re
 
 from audio_quality import kbps_from_relpath
+
+_YT_ID_IN_URL = re.compile(
+    r"(?:youtube\.com/watch\?[^#]*v=|youtu\.be/|youtube\.com/embed/)([A-Za-z0-9_-]{11})",
+    re.I,
+)
+_YT_ID_IN_QUERY = re.compile(r"[?&]v=([A-Za-z0-9_-]{11})\b", re.I)
+_YT_ID_IN_NAME = re.compile(r"\[([A-Za-z0-9_-]{11})\]")
 
 
 class DownloadStatus(str, Enum):
@@ -73,6 +82,27 @@ class Track:
                 return variants[key]
         return self.media_relpath
 
+    def resolved_youtube_video_id(self) -> str:
+        vid = (self.youtube_video_id or "").strip()
+        if len(vid) == 11:
+            return vid
+        u = (self.url or "").strip()
+        if u:
+            m = _YT_ID_IN_URL.search(u) or _YT_ID_IN_QUERY.search(u)
+            if m:
+                return m.group(1)
+        rels = []
+        if self.media_relpath:
+            rels.append(self.media_relpath)
+        rels.extend((self.media_variants or {}).values())
+        for rel in rels:
+            if not rel:
+                continue
+            m = _YT_ID_IN_NAME.search(Path(str(rel)).name)
+            if m:
+                return m.group(1)
+        return ""
+
     def play_src(self, quality: Optional[str] = None) -> Optional[str]:
         rel = self._media_rel_for_quality(quality)
         if not rel:
@@ -82,7 +112,7 @@ class Track:
         return "/media/" + quote(rel, safe="/")
 
     def stream_play_src(self) -> Optional[str]:
-        vid = (self.youtube_video_id or "").strip()
+        vid = self.resolved_youtube_video_id()
         if not vid:
             return None
         return "/api/stream?vid=" + quote(vid, safe="")

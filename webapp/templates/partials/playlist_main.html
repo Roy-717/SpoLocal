@@ -61,7 +61,7 @@
                     data-play-src="{{ track.playback_src() or '' }}"
                     data-track-status="{{ track.status.value }}"
                     data-track-url="{{ (track.url or '')|e }}"
-                    data-youtube-video-id="{{ track.youtube_video_id or '' }}">
+                    data-youtube-video-id="{{ track.resolved_youtube_video_id() }}">
                     <td class="py-2 pl-0 pr-0 align-middle">
                         {% if track.playback_src() %}
                         <div class="track-index-slot relative flex h-8 w-8 items-center justify-center">

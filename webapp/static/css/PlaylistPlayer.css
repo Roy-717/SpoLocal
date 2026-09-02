@@ -207,9 +207,47 @@ body { background: #121212; color: #fff; }
     cursor: pointer;
 }
 #lyrics-panel .lyrics-panel-inner {
+    position: relative;
     padding: 0;
     height: 100%;
     box-sizing: border-box;
+    background: transparent;
+    overflow: hidden;
+}
+#lyrics-paper-host,
+#lyrics-wave-canvas,
+#lyrics-milk-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+}
+#lyrics-paper-host {
+    overflow: hidden;
+}
+#lyrics-milk-canvas {
+    z-index: 0;
+    opacity: 0.85;
+}
+.lyrics-viz-pack {
+    max-width: 7.5rem;
+    height: 1.5rem;
+    padding: 0 0.35rem;
+    border: 0;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.65rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+#lyrics-panel .lyrics-panel-header,
+#lyrics-read-row,
+#lyrics-edit-wrap {
+    position: relative;
+    z-index: 1;
 }
 #lyrics-panel .lyrics-panel-header {
     padding: 1rem 1.25rem 0.75rem;
@@ -258,27 +296,11 @@ body { background: #121212; color: #fff; }
     max-height: 100%;
     min-height: 0;
     overflow-y: auto;
+    background: transparent;
 }
 #lyrics-view-wrap::before,
 #lyrics-view-wrap::after {
-    content: '';
-    position: sticky;
-    left: 0;
-    right: 0;
-    display: block;
-    height: 4rem;
-    z-index: 10;
-    pointer-events: none;
-}
-#lyrics-view-wrap::before {
-    top: 0;
-    margin-bottom: -4rem;
-    background: linear-gradient(to bottom, var(--lyrics-bg-color, #121212), transparent);
-}
-#lyrics-view-wrap::after {
-    bottom: 0;
-    margin-top: -4rem;
-    background: linear-gradient(to top, var(--lyrics-bg-color, #121212), transparent);
+    display: none;
 }
 @media (min-width: 1024px) {
     #lyrics-panel {
@@ -299,6 +321,7 @@ body { background: #121212; color: #fff; }
     margin: 0 auto;
     overflow-x: hidden;
     box-sizing: border-box;
+    background: transparent;
 }
 #lyrics-panel .lyrics-line {
     cursor: pointer;
@@ -312,6 +335,8 @@ body { background: #121212; color: #fff; }
     border-radius: 0.5rem;
     line-height: 1.4;
     transform-origin: left center;
+    background: transparent;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.75);
 }
 #lyrics-panel .lyrics-line.wrap {
     white-space: normal;
@@ -580,6 +605,9 @@ body { background: #121212; color: #fff; }
     flex: 1 1 auto;
     min-height: 0;
     height: 100%;
+}
+#lyrics-read-row.hidden {
+    display: none;
 }
 #lyrics-read-row:has(#lyrics-video-pane:not(.hidden)) #lyrics-view-wrap {
     height: 100%;

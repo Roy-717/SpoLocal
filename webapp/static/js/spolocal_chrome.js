@@ -464,6 +464,7 @@ document.addEventListener('click', function (e) {
                 if (typeof hub.setPlayUi === 'function') hub.setPlayUi(false);
             });
             if (typeof hub.setPlayUi === 'function') hub.setPlayUi(true);
+            if (hub.lyricsController) hub.lyricsController.load_youtube_cover(vid);
             if (hub.queueVisible && hub.queue) hub.queue.render_queue_list();
             if (hub.lyricsVisible && hub.lyricsController) hub.lyricsController.fetchLyrics(true);
             return;

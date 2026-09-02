@@ -526,7 +526,8 @@ class DownloadService:
     def _relpath_matches_quality(self, relpath: str, qk: str) -> bool:
         """True when ``relpath`` exists on disk and matches quality key ``qk`` (e.g. ``64``, ``192``)."""
         try:
-            if not (self.root / "downloads" / relpath).resolve().is_file():
+            path = (self.root / "downloads" / relpath).resolve()
+            if not path.is_file():
                 return False
         except OSError:
             return False
@@ -534,7 +535,11 @@ class DownloadService:
         want = variant_key(parse_quality_kbps(qk))
         if inferred is not None:
             return variant_key(inferred) == want
-        return want == variant_key(DEFAULT_KBPS)
+        stats = read_audio_file_stats(path)
+        br = stats.get("bitrate_kbps")
+        if br:
+            return variant_key(int(br)) == want
+        return False
 
     def _track_can_queue_quality_download(self, track: Track) -> bool:
         if (track.url or "").strip() or (track.youtube_video_id or "").strip():

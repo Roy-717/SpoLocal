@@ -15,31 +15,59 @@ export class AudioNormalizationController {
         this._wired = false;
     }
 
+    ensure_wired() {
+        this.wire();
+        if (!this._wired && this.audio_el && !this.audio_el.paused) {
+            this._connect_graph();
+        }
+    }
+
+    _connect_graph() {
+        if (this._wired) return;
+        try {
+            this.ctx = new AudioContext();
+            const src = this.ctx.createMediaElementSource(this.audio_el);
+            this.gain_node = this.ctx.createGain();
+            src.connect(this.gain_node);
+            this.gain_node.connect(this.ctx.destination);
+            this.analyser = this.ctx.createAnalyser();
+            this.analyser.fftSize = 256;
+            this.analyser.smoothingTimeConstant = 0.82;
+            this.gain_node.connect(this.analyser);
+            this._freq = new Uint8Array(this.analyser.frequencyBinCount);
+            this.audio_el.volume = 1;
+            this._wired = true;
+            if (this.ctx.state === 'suspended') {
+                this.ctx.resume().catch(() => {});
+            }
+        } catch (e) {
+            this._wired = false;
+        }
+        this._sync_gain();
+    }
+
     wire() {
         if (this._wired) return;
         const prefs = window.SpolocalNormalizationPrefs;
         if (prefs) this.enabled = prefs.enabled();
-        const start_ctx = () => {
-            if (this._wired) return;
-            try {
-                this.ctx = new AudioContext();
-                const src = this.ctx.createMediaElementSource(this.audio_el);
-                this.gain_node = this.ctx.createGain();
-                src.connect(this.gain_node);
-                this.gain_node.connect(this.ctx.destination);
-                this.audio_el.volume = 1;
-                this._wired = true;
-                if (this.ctx.state === 'suspended') {
-                    this.ctx.resume().catch(() => {});
-                }
-            } catch (e) {
-                this._wired = false;
-            }
-            this._sync_gain();
-        };
-        this.audio_el.addEventListener('play', start_ctx, { once: true });
-        if (!this.audio_el.paused) start_ctx();
+        this.audio_el.addEventListener('play', () => this._connect_graph(), { once: true });
+        if (!this.audio_el.paused) this._connect_graph();
         this._sync_gain();
+    }
+
+    bands_energy() {
+        if (!this.analyser || !this._freq) return { bass: 0, mid: 0, treble: 0 };
+        this.analyser.getByteFrequencyData(this._freq);
+        const n = this._freq.length;
+        const avg = (a, b) => {
+            let s = 0;
+            const lo = Math.max(0, a);
+            const hi = Math.min(n, b);
+            const c = Math.max(1, hi - lo);
+            for (let i = lo; i < hi; i += 1) s += this._freq[i];
+            return s / c / 255;
+        };
+        return { bass: avg(0, 6), mid: avg(6, 24), treble: avg(24, 64) };
     }
 
     set_user_volume(v) {

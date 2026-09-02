@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="/static/app.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script>window.__likedPlaylistId = {{ liked_playlist_id | tojson }};</script>
-    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=14">
+    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=22">
 </head>
 <body class="font-sans h-screen flex flex-col overflow-hidden">
     <!-- Top bar -->
@@ -400,9 +400,20 @@
          class="hidden fixed left-0 right-0 top-16 lg:left-[20rem] lg:right-[20rem] z-[35] flex flex-col border-t border-[#282828] shadow-[0_-8px_32px_rgba(0,0,0,0.5)]"
          style="background-color: #121212;">
         <div class="lyrics-panel-inner w-full flex flex-col min-h-0 flex-1">
+            <div id="lyrics-paper-host" class="hidden" aria-hidden="true"></div>
+            <canvas id="lyrics-wave-canvas" class="hidden" aria-hidden="true"></canvas>
+            <canvas id="lyrics-milk-canvas" class="hidden" aria-hidden="true"></canvas>
             <div class="lyrics-panel-header flex items-center justify-between gap-3 shrink-0">
                 <div class="flex items-center gap-3 min-w-0">
                     <span id="lyrics-title" class="text-xs font-semibold uppercase tracking-wider shrink-0">Lyrics</span>
+                    <select id="lyrics-viz-pack" class="lyrics-viz-pack" title="Background visualizer" aria-label="Visualizer style">
+                        <option value="auto">Auto</option>
+                        <option value="electronic">Electronic</option>
+                        <option value="rock">Rock</option>
+                        <option value="ambient">Ambient</option>
+                        <option value="pop">Pop</option>
+                        <option value="milkdrop">Milkdrop</option>
+                    </select>
                 </div>
                 <div class="flex items-center gap-2 shrink-0 pr-0.5">
                     <div id="lyrics-mode-switch">
@@ -570,7 +581,9 @@
     <script type="application/json" id="spolocal-player-boot">{{ {"playlistId": current.id if current else none, "isHome": is_home|default(false), "libraryPool": home_library_pool|default([], true), "catalog": playlist_catalog|default([], true)} | tojson | safe }}</script>
     <script src="/static/js/audio_quality_prefs.js?v=3"></script>
     <script src="/static/js/audio_normalization_prefs.js?v=3"></script>
-    <script type="module" src="/static/js/PlaylistSession.mjs?v=59"></script>
+    <script src="https://cdn.jsdelivr.net/npm/butterchurn@2.6.7/lib/butterchurn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresets.min.js"></script>
+    <script type="module" src="/static/js/PlaylistSession.mjs?v=73"></script>
     <script type="module" src="/static/pwa/pwa-entry.js"></script>
     <script src="/static/js/spolocal_chrome.js?v=19" defer></script>
 </body>

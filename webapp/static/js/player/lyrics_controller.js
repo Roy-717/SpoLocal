@@ -1,3 +1,7 @@
+import { LyricsWaveField } from './lyrics_wave_field.js';
+import { LyricsMilkdrop } from './lyrics_milkdrop.js';
+import { LyricsPaperShaders } from './lyrics_paper_shaders.js';
+
 /**
  * Controller for lyrics display, fetching, and editing.
  * Responsibilities:
@@ -27,6 +31,19 @@ export class PlaylistLyricsController {
         hub.lyricsController = this;
         hub.lyricsUserScrollUntil = 0;
         hub._lyricsCenterGen = 0;
+        this.paper_shaders = new LyricsPaperShaders(
+            document.getElementById('lyrics-paper-host'),
+            () => this.state.hub.audioNormalization,
+        );
+        this.wave_field = new LyricsWaveField(
+            document.getElementById('lyrics-wave-canvas'),
+            () => this.state.hub.audioNormalization,
+        );
+        this.milkdrop = new LyricsMilkdrop(
+            document.getElementById('lyrics-milk-canvas'),
+            () => this.state.hub.audioNormalization,
+        );
+        this.bind_viz_pack();
         this.bind_lyrics_user_scroll();
         this.bind_stream_video();
 
@@ -82,6 +99,66 @@ export class PlaylistLyricsController {
             hub.lyricsSaveBtn.addEventListener('click', async () => {
                 try { await this.saveLyrics(); } catch (e) {}
             });
+        }
+    }
+
+    bind_viz_pack() {
+        const sel = document.getElementById('lyrics-viz-pack');
+        if (!sel || sel.dataset.bound) return;
+        sel.dataset.bound = '1';
+        sel.value = this.milkdrop && this.milkdrop.pack && this.milkdrop.pack !== 'auto' ? this.milkdrop.pack : 'auto';
+        sel.addEventListener('change', () => {
+            const v = sel.value;
+            if (this.milkdrop && v === 'milkdrop') this.milkdrop.set_pack('auto');
+            else if (this.milkdrop) this.milkdrop.set_pack(v);
+            if (v !== 'milkdrop') {
+                const mood = v === 'auto' ? this.guess_viz_mood() : v;
+                if (this.paper_shaders) this.paper_shaders.set_mood(mood);
+                if (this.wave_field) this.wave_field.set_mood(mood);
+            }
+            this.sync_lyrics_visuals();
+        });
+        const hub = this.state.hub;
+        if (hub.audio && !hub.audio.dataset.vizPlayBound) {
+            hub.audio.dataset.vizPlayBound = '1';
+            hub.audio.addEventListener('play', () => {
+                if (hub.lyricsVisible) this.sync_lyrics_visuals();
+            });
+        }
+    }
+
+    guess_viz_mood() {
+        const hub = this.state.hub;
+        const s = `${hub.titleEl ? hub.titleEl.textContent : ''} ${hub.subEl ? hub.subEl.textContent : ''}`.toLowerCase();
+        if (/(edm|electro|house|techno|trance|dubstep|dnb|synth|daft)/.test(s)) return 'electronic';
+        if (/(rock|metal|punk|grunge|nirvana|radiohead|arctic|killers)/.test(s)) return 'rock';
+        if (/(ambient|classical|piano|score|lofi|lo-fi|chill)/.test(s)) return 'ambient';
+        return 'pop';
+    }
+
+    sync_lyrics_visuals() {
+        const hub = this.state.hub;
+        const sel = document.getElementById('lyrics-viz-pack');
+        const pack = sel ? sel.value : 'auto';
+        const title = hub.titleEl ? hub.titleEl.textContent : '';
+        const artist = hub.subEl ? hub.subEl.textContent : '';
+        const mood = pack === 'auto' ? this.guess_viz_mood() : pack;
+        if (pack === 'milkdrop') {
+            if (this.paper_shaders) this.paper_shaders.stop();
+            if (this.wave_field) this.wave_field.stop();
+            if (this.milkdrop) this.milkdrop.set_track(title, artist);
+            if (this.milkdrop && this.milkdrop.start()) return;
+        }
+        if (this.milkdrop) this.milkdrop.stop();
+        if (this.paper_shaders) this.paper_shaders.set_mood(mood);
+        if (this.paper_shaders && this.paper_shaders.start()) {
+            if (this.wave_field) this.wave_field.stop();
+            return;
+        }
+        if (this.wave_field) {
+            this.wave_field.set_mood(mood);
+            this.wave_field.set_track_key(title, artist);
+            this.wave_field.start();
         }
     }
 
@@ -1004,10 +1081,15 @@ export class PlaylistLyricsController {
             hub._lyricsOpenFollowUntil = Date.now() + 2500;
             this.setLyricsMode('read');
             this.fetchLyrics(true);
+            this.extract_from_player_cover();
+            this.sync_lyrics_visuals();
         } else {
             // Reset colors when closing to avoid flash of old colors on next open
             this.resetLyricsColors();
             this.unload_stream_video();
+            if (this.paper_shaders) this.paper_shaders.stop();
+            if (this.wave_field) this.wave_field.stop();
+            if (this.milkdrop) this.milkdrop.stop();
         }
     }
 
@@ -1103,8 +1185,18 @@ export class PlaylistLyricsController {
         if (!hub.lyricsPanel) return;
         hub.lyricsBgIsDark = colors.isDark;
         hub.lyricsPanel.style.backgroundColor = colors.background;
+        hub.lyricsPanel.style.backgroundImage = 'none';
         hub.lyricsPanel.style.setProperty('--lyrics-text-color', colors.text);
         hub.lyricsPanel.style.setProperty('--lyrics-bg-color', colors.background);
+        hub.lyricsPanel.style.setProperty('--lyrics-bg-gradient', colors.background);
+        const pal = {
+            bg: colors.background,
+            fills: colors.fills,
+            strokes: colors.strokes,
+        };
+        if (this.paper_shaders) this.paper_shaders.set_palette(pal);
+        if (this.wave_field) this.wave_field.set_palette(pal);
+        if (hub.lyricsVisible) this.sync_lyrics_visuals();
         // Set dim/hover colors based on actual text color so inactive lines stay readable
         const alpha = colors.isDark ? '0.45' : '0.4';
         const hoverAlpha = colors.isDark ? '0.75' : '0.65';
@@ -1161,8 +1253,12 @@ export class PlaylistLyricsController {
         const hub = this.state.hub;
         if (!hub.lyricsPanel) return;
         hub.lyricsPanel.style.backgroundColor = '#121212';
+        hub.lyricsPanel.style.backgroundImage = 'none';
         hub.lyricsPanel.style.setProperty('--lyrics-text-color', '#ffffff');
         hub.lyricsPanel.style.setProperty('--lyrics-bg-color', '#121212');
+        hub.lyricsPanel.style.setProperty('--lyrics-bg-gradient', '#121212');
+        if (this.paper_shaders) this.paper_shaders.set_palette(LyricsPaperShaders.default_palette());
+        if (this.wave_field) this.wave_field.set_palette(LyricsWaveField.default_palette());
         hub.lyricsPanel.style.setProperty('--lyrics-line-dim-color', 'rgba(255,255,255,0.45)');
         hub.lyricsPanel.style.setProperty('--lyrics-line-hover-color', 'rgba(255,255,255,0.75)');
 
@@ -1194,6 +1290,104 @@ export class PlaylistLyricsController {
         if (modeSwitch) modeSwitch.style.backgroundColor = '';
     }
 
+    rgb_to_hsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const d = max - min;
+        let h = 0;
+        const l = (max + min) / 2;
+        const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+        if (d !== 0) {
+            if (max === r) h = ((g - b) / d) % 6;
+            else if (max === g) h = (b - r) / d + 2;
+            else h = (r - g) / d + 4;
+            h *= 60;
+            if (h < 0) h += 360;
+        }
+        return { h, s, l };
+    }
+
+    hsl_to_rgb(h, s, l) {
+        const c = (1 - Math.abs(2 * l - 1)) * s;
+        const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+        const m = l - c / 2;
+        let r = 0, g = 0, b = 0;
+        if (h < 60) { r = c; g = x; }
+        else if (h < 120) { r = x; g = c; }
+        else if (h < 180) { g = c; b = x; }
+        else if (h < 240) { g = x; b = c; }
+        else if (h < 300) { r = x; b = c; }
+        else { r = c; b = x; }
+        return {
+            r: Math.round((r + m) * 255),
+            g: Math.round((g + m) * 255),
+            b: Math.round((b + m) * 255),
+        };
+    }
+
+    pixel_chroma(r, g, b) {
+        return (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+    }
+
+    hue_distance(a, b) {
+        const d = Math.abs(a - b) % 360;
+        return Math.min(d, 360 - d);
+    }
+
+    hex_from_rgb(r, g, b) {
+        return '#' + [r, g, b].map(x => Math.min(255, Math.max(0, Math.round(x))).toString(16).padStart(2, '0')).join('');
+    }
+
+    lyrics_tone(hsl, lightness, sat_mul) {
+        const s = Math.min(0.95, Math.max(0.45, hsl.s * (sat_mul == null ? 1.35 : sat_mul)));
+        const rgb = this.hsl_to_rgb(hsl.h, s, lightness);
+        return this.hex_from_rgb(rgb.r, rgb.g, rgb.b);
+    }
+
+    ranked_cover_hues(data) {
+        const buckets = new Map();
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            if (data[i + 3] < 128) continue;
+            const mx = Math.max(r, g, b);
+            const mn = Math.min(r, g, b);
+            if (mx < 20 || mn > 240) continue;
+            const chroma = this.pixel_chroma(r, g, b);
+            if (chroma < 0.08) continue;
+            const hsl = this.rgb_to_hsl(r, g, b);
+            const hue_key = Math.round(hsl.h / 12) * 12;
+            const prev = buckets.get(hue_key) || { n: 0, chroma: 0, h: hsl.h, s: hsl.s };
+            prev.n += 1;
+            prev.chroma += chroma;
+            prev.s = Math.max(prev.s, hsl.s);
+            buckets.set(hue_key, prev);
+        }
+        return [...buckets.values()]
+            .map(v => ({ h: v.h, s: v.s, score: v.n * (0.2 + v.chroma / Math.max(1, v.n)) }))
+            .sort((a, b) => b.score - a.score);
+    }
+
+    pick_cover_hues(ranked) {
+        const picked = [];
+        for (const c of ranked) {
+            if (picked.every(p => this.hue_distance(p.h, c.h) >= 28)) {
+                picked.push(c);
+                if (picked.length === 3) break;
+            }
+        }
+        if (!picked.length) {
+            picked.push({ h: 270, s: 0.65 }, { h: 200, s: 0.55 }, { h: 320, s: 0.5 });
+        }
+        while (picked.length < 3) {
+            const base = picked[0];
+            picked.push({ h: (base.h + picked.length * 40) % 360, s: Math.max(0.5, base.s) });
+        }
+        return picked;
+    }
+
     calculateLyricsColors(img) {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
@@ -1209,78 +1403,24 @@ export class PlaylistLyricsController {
         }
 
         const data = ctx.getImageData(0, 0, size, size).data;
-        const colorMap = new Map();
-        let totalR = 0, totalG = 0, totalB = 0, count = 0;
-
-        for (let i = 0; i < data.length; i += 16) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            const a = data[i + 3];
-
-            if (a < 128) continue;
-
-            totalR += r;
-            totalG += g;
-            totalB += b;
-            count++;
-
-            const key = `${Math.min(248, Math.round(r / 8) * 8)},${Math.min(248, Math.round(g / 8) * 8)},${Math.min(248, Math.round(b / 8) * 8)}`;
-            colorMap.set(key, (colorMap.get(key) || 0) + 1);
-        }
-
-        let dominantKey = null;
-        let maxCount = 0;
-        for (const [key, cnt] of colorMap) {
-            if (cnt > maxCount) {
-                maxCount = cnt;
-                dominantKey = key;
-            }
-        }
-
-        let bgR, bgG, bgB;
-        if (dominantKey) {
-            [bgR, bgG, bgB] = dominantKey.split(',').map(Number);
-        } else if (count > 0) {
-            bgR = Math.round(totalR / count);
-            bgG = Math.round(totalG / count);
-            bgB = Math.round(totalB / count);
-        } else {
-            bgR = 18; bgG = 18; bgB = 18;
-        }
-
-        const luminance = (0.299 * bgR + 0.587 * bgG + 0.114 * bgB) / 255;
-        const isDark = luminance < 0.5;
-
-        // Brighten dark colors so the background is distinguishable from black
-        if (isDark) {
-            const minBrightness = 40;
-            bgR = Math.max(bgR, minBrightness);
-            bgG = Math.max(bgG, minBrightness);
-            bgB = Math.max(bgB, minBrightness);
-        }
-
-        // Always use maximum contrast: white on dark, near-black on light
-        const textR = isDark ? 255 : 30;
-        const textG = isDark ? 255 : 30;
-        const textB = isDark ? 255 : 30;
-
-        // Verify contrast ratio (WCAG formula) - fallback if < 4.5
-        const textLum = (0.299 * textR + 0.587 * textG + 0.114 * textB) / 255;
-        const lighter = Math.max(luminance, textLum) + 0.05;
-        const darker = Math.min(luminance, textLum) + 0.05;
-        const contrast = lighter / darker;
-
-        if (contrast < 4.5) {
-            bgR = 30; bgG = 30; bgB = 30;
-        }
-
-        // Clamp to 0-255 before converting to prevent overflow (e.g. Math.round(255/8)*8 = 256)
-        const toHex = (r, g, b) => '#' + [r, g, b].map(x => Math.min(255, Math.max(0, Math.round(x))).toString(16).padStart(2, '0')).join('');
+        const hues = this.pick_cover_hues(this.ranked_cover_hues(data));
+        const fills = [
+            this.lyrics_tone(hues[0], 0.14, 1.1),
+            this.lyrics_tone(hues[1], 0.20, 1.15),
+            this.lyrics_tone(hues[2], 0.26, 1.2),
+            this.lyrics_tone(hues[0], 0.32, 1.05),
+        ];
+        const strokes = [
+            this.lyrics_tone(hues[0], 0.68, 1.4),
+            this.lyrics_tone(hues[1], 0.62, 1.35),
+            this.lyrics_tone(hues[2], 0.58, 1.3),
+        ];
         return {
-            background: toHex(bgR, bgG, bgB),
-            text: isDark ? '#ffffff' : '#1e1e1e',
-            isDark: isDark
+            background: fills[0],
+            fills,
+            strokes,
+            text: '#ffffff',
+            isDark: true
         };
     }
 
@@ -1288,17 +1428,33 @@ export class PlaylistLyricsController {
         const hub = this.state.hub;
         hub.coverWrap.classList.add('no-art');
         hub.coverImg.classList.add('hidden');
-        // Reset colors immediately to prevent previous track's colors persisting
         this.resetLyricsColors();
         if (!trackId) return;
         const pid = (coverPlaylistIdOpt != null && String(coverPlaylistIdOpt).trim() !== '')
             ? String(coverPlaylistIdOpt).trim()
             : String(hub.playingPlaylistId || hub.playlistId || '').trim();
-        if (!pid) return;
+        if (!pid) {
+            const vid = this.current_youtube_vid();
+            if (vid) this.load_youtube_cover(vid);
+            return;
+        }
         const url = '/playlists/' + encodeURIComponent(pid) + '/tracks/' + encodeURIComponent(trackId) + '/cover';
+        this.load_cover_url(url);
+        if (hub.lyricsVisible) this.sync_lyrics_visuals();
+    }
+
+    load_youtube_cover(vid) {
+        const id = String(vid || '').trim();
+        if (!id) return;
+        this.load_cover_url('/api/thumb?vid=' + encodeURIComponent(id));
+    }
+
+    load_cover_url(url) {
+        const hub = this.state.hub;
+        if (!url || !hub.coverImg) return;
         if (!hub.coverProbeImg) hub.coverProbeImg = new Image();
         const probe = hub.coverProbeImg;
-        probe.crossOrigin = 'anonymous';
+        probe.removeAttribute('crossorigin');
         probe.onload = () => {
             hub.coverImg.src = url;
             hub.coverImg.classList.remove('hidden');
@@ -1312,6 +1468,19 @@ export class PlaylistLyricsController {
             this.resetLyricsColors();
         };
         probe.src = url;
+    }
+
+    extract_from_player_cover() {
+        const hub = this.state.hub;
+        const img = hub.coverImg;
+        if (img && img.complete && img.naturalWidth) {
+            this.extractCoverColors(img);
+            return;
+        }
+        const vid = this.current_youtube_vid();
+        if (vid && (!hub.currentTrackId || hub.searchStreamActive)) {
+            this.load_youtube_cover(vid);
+        }
     }
 
     extractCoverColors(img) {

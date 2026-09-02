@@ -550,7 +550,7 @@ export class PlaylistSessionController {
         void this.transport.apply_track_loudness(t, pls);
         hub.titleEl.textContent = t.title;
         hub.subEl.textContent = t.artist;
-        if (typeof window.loadCover === 'function') window.loadCover(trs);
+        if (this.lyrics) this.lyrics.loadCover(trs, pls);
         this.transport.updatePlayingRow();
         this.transport.setPlayUi(false);
         this.transport.update_like_button_ui();

@@ -142,15 +142,14 @@ class YtDlpAudioDownloader:
         self._youtube_dir.mkdir(parents=True, exist_ok=True)
 
     def _ydl_opts(self, outtmpl: str, quality: str | int = 192) -> dict:
-        from webapp.audio_quality import parse_quality_kbps, ytdlp_audio_postprocessor, ytdlp_youtube_opts
+        from webapp.audio_quality import parse_quality_kbps, ytdlp_extract_audio_opts, ytdlp_youtube_opts
 
         kbps = parse_quality_kbps(quality)
         opts = ytdlp_youtube_opts()
+        opts.update(ytdlp_extract_audio_opts(kbps))
         opts.update({
-            "format": "bestaudio/best",
             "ffmpeg_location": str(self._ffmpeg_bin),
             "outtmpl": {"default": outtmpl},
-            "postprocessors": [ytdlp_audio_postprocessor(kbps)],
         })
         return opts
 
@@ -358,7 +357,7 @@ class SpotifyEmbedDownloader:
         from webapp.audio_quality import (
             parse_quality_kbps,
             quality_file_stem,
-            ytdlp_audio_postprocessor,
+            ytdlp_extract_audio_opts,
             ytdlp_youtube_opts,
         )
 
@@ -372,11 +371,10 @@ class SpotifyEmbedDownloader:
         for provider in ("ytsearch1", "ytmsearch1"):
             query = f"{provider}:{artist} - {title}"
             opts = ytdlp_youtube_opts()
+            opts.update(ytdlp_extract_audio_opts(kbps))
             opts.update({
-                "format": "bestaudio/best",
                 "ffmpeg_location": self._ffmpeg_exe,
                 "outtmpl": {"default": outtmpl},
-                "postprocessors": [ytdlp_audio_postprocessor(kbps)],
                 "quiet": True,
                 "no_warnings": True,
                 "socket_timeout": 30,

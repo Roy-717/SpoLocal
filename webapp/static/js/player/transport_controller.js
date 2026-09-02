@@ -449,25 +449,19 @@ export class PlaylistTransportController {
         hub.subEl.textContent = t.artist || '—';
 
         if (prefs && !prefs.hasVariant(t, playback_q)) {
-            const local_src = prefs.resolvePlaySrc(t);
-            const has_local = !!(local_src && prefs.normalizeMediaPath(local_src));
-            if (!has_local) {
-                const ready = await this.ensurePlaybackVariantReady(t, playlistId, trackId, playback_q, playGen);
-                if (playGen !== this._playGeneration) return;
-                if (!ready) return;
-                const row = await this.fetchTrackPayload(playlistId, trackId);
-                if (row) {
-                    this.patchTrackInHub(row);
-                    t = row;
-                }
+            const ready = await this.ensurePlaybackVariantReady(t, playlistId, trackId, playback_q, playGen);
+            if (playGen !== this._playGeneration) return;
+            const row = await this.fetchTrackPayload(playlistId, trackId);
+            if (row) {
+                this.patchTrackInHub(row);
+                t = Object.assign({}, t, row, { id: trackId });
             }
+            if (!ready && !prefs.hasVariant(t, playback_q) && !prefs.streamPlaySrc(t)) return;
         }
 
-        const local_src = prefs ? prefs.resolvePlaySrc(t) : (t.play_src || preliminarySrc);
-        const has_local = !!(prefs && local_src && prefs.normalizeMediaPath(local_src));
-        const playSrc = has_local
-            ? (prefs.resolveExactPlaySrc(t, playback_q) || local_src)
-            : (prefs ? prefs.resolvePlaybackPlaySrc(t, playback_q) : (t.play_src || preliminarySrc));
+        const playSrc = prefs
+            ? (prefs.resolveExactPlaySrc(t, playback_q) || prefs.resolvePlaybackPlaySrc(t, playback_q))
+            : (t.play_src || preliminarySrc);
         if (!playSrc) return;
 
         if (hub.pendingRestoreOnMeta) {
@@ -1352,11 +1346,11 @@ export class PlaylistTransportController {
         return false;
     }
 
-    async ensurePlaybackVariantReady(track, playlist_id, track_id, playback_q, play_gen) {
+    async ensurePlaybackVariantReady(track, playlist_id, track_id, playback_q, play_gen, allow_stream) {
         const prefs = window.SpolocalQualityPrefs;
         if (!prefs || prefs.hasVariant(track, playback_q)) return true;
         const stream_src = prefs.streamPlaySrc(track);
-        if (stream_src) {
+        if (allow_stream !== false && stream_src) {
             void this.request_quality_download(playlist_id, track_id, playback_q);
             return true;
         }
@@ -1383,28 +1377,43 @@ export class PlaylistTransportController {
         if (!hub.currentTrackId) return;
         const prefs = window.SpolocalQualityPrefs;
         const playback_q = prefs ? String(prefs.playbackKbps()) : '192';
-        let t = this.findTrackInHub(hub.currentTrackId);
         const pid = hub.playingPlaylistId || hub.playlistId;
-        if (!prefs || !t || !pid) return;
+        if (!prefs || !pid) return;
+
+        const row = await this.fetchTrackPayload(pid, hub.currentTrackId);
+        if (row) this.patchTrackInHub(row);
+        let t = this.findTrackInHub(hub.currentTrackId) || row;
+        if (!t) return;
 
         if (!prefs.hasVariant(t, playback_q)) {
-            const ok = await this.ensurePlaybackVariantReady(t, pid, hub.currentTrackId, playback_q, this._playGeneration);
+            const ok = await this.ensurePlaybackVariantReady(t, pid, hub.currentTrackId, playback_q, this._playGeneration, false);
             if (!ok) return;
+            const row2 = await this.fetchTrackPayload(pid, hub.currentTrackId);
+            if (row2) this.patchTrackInHub(row2);
             t = this.findTrackInHub(hub.currentTrackId) || t;
         }
 
-        const desired = prefs.resolvePlaybackPlaySrc(t, playback_q);
+        const desired = prefs.resolveExactPlaySrc(t, playback_q);
         if (!desired) return;
-
-        const current_path = prefs.normalizeMediaPath(hub.audio.currentSrc || hub.audio.src);
-        const desired_path = prefs.normalizeMediaPath(desired);
-        if (current_path && desired_path && current_path === desired_path) return;
-
-        const resume_time = Math.max(0, hub.audio.currentTime || 0);
-        hub.audio.pause();
-        hub.audio.src = desired;
+        const src = desired + (desired.indexOf('?') >= 0 ? '&' : '?') + 'kbps=' + encodeURIComponent(playback_q);
+        this.replace_audio_src(src, Math.max(0, hub.audio.currentTime || 0));
         void this.apply_track_loudness(t, pid);
+    }
+
+    replace_audio_src(src, resume_time) {
+        const hub = this.state.hub;
+        if (!hub.audio || !src) return;
+        this._audioSrcGen = (this._audioSrcGen || 0) + 1;
+        const gen = this._audioSrcGen;
+        hub.audio.pause();
+        hub.audio.removeAttribute('src');
+        try { hub.audio.load(); } catch (e) {}
+        hub.audio.src = src;
+        const want = src.split('?')[0];
         const on_ready = () => {
+            if (gen !== this._audioSrcGen) return;
+            const cur = String(hub.audio.currentSrc || '');
+            if (want && cur && cur.indexOf(want) === -1) return;
             if (resume_time > 0.25 && hub.audio.duration && resume_time < hub.audio.duration - 0.35) {
                 try { hub.audio.currentTime = resume_time; } catch (e) { /* ignore */ }
             }
@@ -1412,11 +1421,7 @@ export class PlaylistTransportController {
             this.setPlayUi(true);
             this.updateMediaSessionPlaybackState();
         };
-        if (hub.audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
-            on_ready();
-        } else {
-            hub.audio.addEventListener('canplay', on_ready, { once: true });
-        }
+        hub.audio.addEventListener('canplay', on_ready, { once: true });
     }
 
     leave_search_stream() {

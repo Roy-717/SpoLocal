@@ -53,12 +53,31 @@ def variant_key(kbps: int) -> str:
     return str(snap_kbps(kbps))
 
 
+def ytdlp_audio_format() -> str:
+    """Audio-only DASH. Never fall back to muxed video (often ~44 kbps AAC)."""
+    return (
+        "bestaudio[acodec^=opus]/"
+        "bestaudio[acodec^=mp4a]/"
+        "bestaudio[abr>=96]/"
+        "bestaudio"
+    )
+
+
 def ytdlp_audio_postprocessor(kbps: int) -> dict:
-    q = variant_key(kbps)
+    q = snap_kbps(kbps)
     return {
         "key": "FFmpegExtractAudio",
         "preferredcodec": "mp3",
         "preferredquality": q,
+    }
+
+
+def ytdlp_extract_audio_opts(kbps: int) -> dict[str, Any]:
+    q = snap_kbps(kbps)
+    return {
+        "format": ytdlp_audio_format(),
+        "postprocessors": [ytdlp_audio_postprocessor(q)],
+        "postprocessor_args": {"FFmpegExtractAudio": ["-b:a", f"{q}k"]},
     }
 
 
@@ -105,7 +124,7 @@ def ytdlp_youtube_opts() -> dict[str, Any]:
     opts: dict[str, Any] = {
         "force_ipv4": True,
         "extractor_args": {
-            "youtube": {"player_client": ["android", "web", "web_embedded", "ios", "android_vr"]},
+            "youtube": {"player_client": ["web", "mweb", "web_embedded", "tv", "ios", "android"]},
         },
     }
     deno = shutil.which("deno")
@@ -118,7 +137,7 @@ def ytdlp_stream_cmd(video_id: str, *, max_seconds: Optional[int] = None) -> lis
     cmd = [
         "yt-dlp",
         "-f",
-        "bestaudio/best",
+        ytdlp_audio_format(),
         "-o",
         "-",
         "--no-playlist",
@@ -126,7 +145,7 @@ def ytdlp_stream_cmd(video_id: str, *, max_seconds: Optional[int] = None) -> lis
         "--no-warnings",
         "--force-ipv4",
         "--extractor-args",
-        "youtube:player_client=android,web,web_embedded,ios,android_vr",
+        "youtube:player_client=web,mweb,web_embedded,tv,ios,android",
     ]
     deno = shutil.which("deno")
     if deno:

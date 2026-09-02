@@ -41,7 +41,7 @@ from download_service import DownloadService
 from tag_metadata import extract_cover
 from cover_image import DEFAULT_JPEG_QUALITY, DEFAULT_THUMB_MAX_SIDE, square_thumb_jpeg
 from audio_quality import ytdlp_stream_cmd as _ytdlp_audio_cmd
-from audio_quality import ytdlp_video_format, ytdlp_youtube_opts, parse_quality_kbps, video_height_for_kbps
+from audio_quality import ytdlp_video_format, ytdlp_youtube_opts, ytdlp_audio_format, parse_quality_kbps, video_height_for_kbps
 
 
 def _youtube_video_id_from_track_metadata(artist: str, title: str) -> Optional[str]:
@@ -714,7 +714,7 @@ async def _stream_ytdlp_audio_or_502(
 def _extract_preview_payload(video_id: str) -> YoutubeCdnAudio:
     url_yt = f"https://www.youtube.com/watch?v={video_id}"
     opts: dict[str, Any] = {
-        "format": "bestaudio/best",
+        "format": ytdlp_audio_format(),
         "quiet": True,
         "no_warnings": True,
     }
@@ -1295,6 +1295,35 @@ async def api_stream(request: Request, vid: str, fresh: int = 0):
         _preview_cache.pop(vid, None)
     _keep_preview_cache_only(vid)
     return await YoutubeStreamProxy(vid).response_for(request)
+
+
+@app.get("/api/thumb")
+async def api_thumb(vid: str):
+    """Same-origin YouTube thumbnail so canvas color extraction is not tainted."""
+    if not vid or not vid.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(status_code=400, detail="Invalid video id")
+    vid = vid.strip()
+    urls = (
+        f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
+        f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg",
+        f"https://i.ytimg.com/vi/{vid}/default.jpg",
+    )
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as client:
+            for url in urls:
+                r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                if r.is_success and r.content:
+                    mime = r.headers.get("content-type") or "image/jpeg"
+                    if not mime.startswith("image/"):
+                        mime = "image/jpeg"
+                    return Response(
+                        content=r.content,
+                        media_type=mime,
+                        headers={"Cache-Control": "public, max-age=86400"},
+                    )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Thumbnail unavailable") from exc
+    raise HTTPException(status_code=404, detail="Thumbnail not found")
 
 
 @app.get("/api/stream/video/prepare")

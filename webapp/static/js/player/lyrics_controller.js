@@ -68,6 +68,7 @@ export class PlaylistLyricsController {
             hub.lyricsTabEdit.dataset.bound = '1';
             hub.lyricsTabEdit.addEventListener('click', () => { this.setLyricsMode('edit'); });
         }
+        this.bind_lyrics_view_tabs();
         if (hub.lyricsCancelEdit && !hub.lyricsCancelEdit.dataset.bound) {
             hub.lyricsCancelEdit.dataset.bound = '1';
             hub.lyricsCancelEdit.addEventListener('click', () => { this.setLyricsMode('read'); });
@@ -100,6 +101,19 @@ export class PlaylistLyricsController {
                 try { await this.saveLyrics(); } catch (e) {}
             });
         }
+    }
+
+    bind_lyrics_view_tabs() {
+        const hub = this.state.hub;
+        const tabs = [
+            [hub.lyricsTabLyrics, 'lyrics'],
+            [hub.lyricsTabVideo, 'video'],
+        ];
+        tabs.forEach(([tab, view]) => {
+            if (!tab || tab.dataset.bound) return;
+            tab.dataset.bound = '1';
+            tab.addEventListener('click', () => this.set_lyrics_view(view));
+        });
     }
 
     bind_viz_pack() {
@@ -1079,6 +1093,7 @@ export class PlaylistLyricsController {
             hub.lyricsSaveStatus.classList.add('hidden');
             hub.lyricsUserScrollUntil = 0;
             hub._lyricsOpenFollowUntil = Date.now() + 2500;
+            this.set_lyrics_view('lyrics');
             this.setLyricsMode('read');
             this.fetchLyrics(true);
             this.extract_from_player_cover();
@@ -1103,10 +1118,59 @@ export class PlaylistLyricsController {
         });
     }
 
+    set_lyrics_view(view) {
+        const hub = this.state.hub;
+        const vid = this.current_youtube_vid();
+        const show_video = view === 'video' && hub.lyricsMode === 'read' && !!vid;
+        hub.lyricsViewMode = show_video ? 'video' : 'lyrics';
+        if (!show_video && hub._streamVideoLoaded) {
+            this.hide_stream_video();
+        }
+        this.sync_lyrics_view_tabs(vid);
+        if (show_video) this.sync_stream_video_pane();
+    }
+
+    sync_lyrics_view_tabs(vid) {
+        const hub = this.state.hub;
+        const has_video = !!(vid || this.current_youtube_vid());
+        const can_switch = !!(hub.lyricsVisible && hub.lyricsMode === 'read' && has_video);
+        if (!can_switch) hub.lyricsViewMode = 'lyrics';
+
+        const video_selected = can_switch && hub.lyricsViewMode === 'video';
+        if (hub.lyricsReadRow) {
+            hub.lyricsReadRow.classList.toggle('mobile-video-active', video_selected);
+        }
+        if (hub.lyricsMobileViewSwitch) {
+            hub.lyricsMobileViewSwitch.classList.toggle('hidden', !can_switch);
+            hub.lyricsMobileViewSwitch.setAttribute('aria-hidden', String(!can_switch));
+        }
+
+        const current_text_color = hub.lyricsPanel
+            ? hub.lyricsPanel.style.getPropertyValue('--lyrics-text-color') || '#ffffff'
+            : '#ffffff';
+        const bg_is_dark = (hub.lyricsBgIsDark === true || hub.lyricsBgIsDark === false)
+            ? hub.lyricsBgIsDark
+            : true;
+        const active_text = bg_is_dark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)';
+        [
+            [hub.lyricsTabLyrics, !video_selected],
+            [hub.lyricsTabVideo, video_selected],
+        ].forEach(([tab, active]) => {
+            if (!tab) return;
+            tab.setAttribute('aria-selected', String(active));
+            tab.tabIndex = active ? 0 : -1;
+            tab.style.backgroundColor = active
+                ? (bg_is_dark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)')
+                : 'transparent';
+            tab.style.color = active ? current_text_color : active_text;
+        });
+    }
+
     setLyricsMode(mode) {
         const hub = this.state.hub;
         if (hub.searchStreamActive) mode = 'read';
         hub.lyricsMode = mode;
+        if (mode !== 'read') this.set_lyrics_view('lyrics');
         const readOn = mode === 'read';
         const currentTextColor = hub.lyricsPanel.style.getPropertyValue('--lyrics-text-color') || '#ffffff';
         // Use stored background-dark flag if available; default to dark (the app's natural state)
@@ -1247,6 +1311,7 @@ export class PlaylistLyricsController {
         if (modeSwitch) {
             modeSwitch.style.backgroundColor = colors.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
         }
+        this.sync_lyrics_view_tabs();
     }
 
     resetLyricsColors() {
@@ -1751,6 +1816,7 @@ export class PlaylistLyricsController {
         const pane = hub.lyricsVideoPane;
         if (!pane) return;
         const vid = this.current_youtube_vid();
+        this.sync_lyrics_view_tabs(vid);
         const show = !!(hub.lyricsVisible && hub.lyricsMode === 'read' && vid);
         pane.classList.toggle('hidden', !show);
         if (!show) {

@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="/static/app.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script>window.__likedPlaylistId = {{ liked_playlist_id | tojson }};</script>
-    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=22">
+    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=33">
 </head>
 <body class="font-sans h-screen flex flex-col overflow-hidden">
     <!-- Top bar -->
@@ -404,7 +404,7 @@
             <canvas id="lyrics-wave-canvas" class="hidden" aria-hidden="true"></canvas>
             <canvas id="lyrics-milk-canvas" class="hidden" aria-hidden="true"></canvas>
             <div class="lyrics-panel-header flex items-center justify-between gap-3 shrink-0">
-                <div class="flex items-center gap-3 min-w-0">
+                <div class="lyrics-header-main flex items-center gap-3 min-w-0">
                     <span id="lyrics-title" class="text-xs font-semibold uppercase tracking-wider shrink-0">Lyrics</span>
                     <select id="lyrics-viz-pack" class="lyrics-viz-pack" title="Background visualizer" aria-label="Visualizer style">
                         <option value="auto">Auto</option>
@@ -415,7 +415,11 @@
                         <option value="milkdrop">Milkdrop</option>
                     </select>
                 </div>
-                <div class="flex items-center gap-2 shrink-0 pr-0.5">
+                <div class="lyrics-header-controls flex items-center gap-2 shrink-0 pr-0.5">
+                    <div id="lyrics-mobile-view-switch" class="lyrics-mobile-view-switch hidden" role="tablist" aria-label="Lyrics view">
+                        <button type="button" id="lyrics-tab-lyrics" class="lyrics-tab" role="tab" aria-selected="true">Lyrics</button>
+                        <button type="button" id="lyrics-tab-video" class="lyrics-tab" role="tab" aria-selected="false">Video</button>
+                    </div>
                     <div id="lyrics-mode-switch">
                         <button type="button" id="lyrics-tab-read" class="lyrics-tab">Read</button>
                         <button type="button" id="lyrics-tab-edit" class="lyrics-tab">Edit</button>
@@ -583,7 +587,7 @@
     <script src="/static/js/audio_normalization_prefs.js?v=3"></script>
     <script src="https://cdn.jsdelivr.net/npm/butterchurn@2.6.7/lib/butterchurn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresets.min.js"></script>
-    <script type="module" src="/static/js/PlaylistSession.mjs?v=73"></script>
+    <script type="module" src="/static/js/PlaylistSession.mjs?v=74"></script>
     <script type="module" src="/static/pwa/pwa-entry.js"></script>
     <script src="/static/js/spolocal_chrome.js?v=19" defer></script>
 </body>

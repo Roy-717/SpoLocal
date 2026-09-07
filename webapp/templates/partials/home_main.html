@@ -1,14 +1,14 @@
 <!--
   Home view shell: stats populated client-side from localStorage play counts.
 -->
-<div id="playlist-scroll-root" class="flex-1 min-h-0 overflow-y-auto p-4 pb-[calc(var(--app-player-inset-mobile)_+_0.75rem)] lg:pb-24">
-    <div class="p-6 border-b border-[#282828] -mx-4 -mt-4 mb-6">
+<div id="playlist-scroll-root" class="flex-1 min-h-0 overflow-y-auto px-6 pt-6 pb-[calc(var(--app-player-inset-mobile)_+_0.75rem)] lg:pb-24">
+    <div id="home-header">
         <h1 class="text-4xl font-bold tracking-tighter">Home</h1>
         <p class="text-sm text-[#B3B3B3] mt-2">Your most played music</p>
     </div>
 
-    <section class="mb-10">
-        <div class="flex items-center justify-between gap-3 mb-4">
+    <section class="mb-8">
+        <div class="flex items-center justify-between gap-3 mb-2">
             <h2 class="text-lg font-bold text-white">Random play</h2>
             <button type="button" id="home-random-toggle"
                     class="rounded-full px-5 py-2 text-sm font-semibold bg-[#1DB954] text-black hover:bg-[#1ed760] transition">
@@ -19,15 +19,15 @@
         <p id="home-random-status" class="hidden mt-2 text-xs text-[#1DB954] font-semibold">Random mode on</p>
     </section>
 
-    <section class="mb-10">
-        <h2 class="text-lg font-bold text-white mb-4">Most played playlists</h2>
-        <div id="home-top-playlists" class="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8 gap-1.5 gap-y-2"></div>
+    <section class="mb-8">
+        <h2 class="text-lg font-bold text-white mb-3">Most played playlists</h2>
+        <div id="home-top-playlists"></div>
         <p id="home-playlists-empty" class="hidden text-sm text-[#727272]">Play some playlists to see them here.</p>
     </section>
 
     <section>
-        <h2 class="text-lg font-bold text-white mb-4">Most played songs</h2>
-        <div id="home-top-songs" class="flex flex-col gap-0.5"></div>
+        <h2 class="text-lg font-bold text-white mb-3">Most played songs</h2>
+        <div id="home-top-songs" class="flex flex-col gap-1"></div>
         <p id="home-songs-empty" class="hidden text-sm text-[#727272]">Play some tracks to see them here.</p>
     </section>
 </div>

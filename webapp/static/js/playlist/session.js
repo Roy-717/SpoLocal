@@ -1,6 +1,6 @@
 import { PlaylistTransportController } from '../player/transport_controller.js';
 import { PlaylistQueueController } from '../player/queue_controller.js';
-import { PlaylistLyricsController } from '../player/lyrics_controller.js';
+import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=74';
 import { PlaylistEditModalController } from '../ui/edit_modal_controller.js';
 import { PlaylistContextMenuController } from '../ui/context_menu_controller.js';
 import { PlaylistDownloadController } from '../services/download_controller.js';
@@ -223,6 +223,9 @@ export class PlaylistSessionController {
         hub.lyricsPanel = document.getElementById('lyrics-panel');
         hub.lyricsTitle = document.getElementById('lyrics-title');
         hub.lyricsModeSwitch = document.getElementById('lyrics-mode-switch');
+        hub.lyricsMobileViewSwitch = document.getElementById('lyrics-mobile-view-switch');
+        hub.lyricsTabLyrics = document.getElementById('lyrics-tab-lyrics');
+        hub.lyricsTabVideo = document.getElementById('lyrics-tab-video');
         hub.lyricsBody = document.getElementById('lyrics-body');
         hub.lyricsEmptyHint = document.getElementById('lyrics-empty-hint');
         hub.lyricsNoAudioHint = document.getElementById('lyrics-no-audio-hint');
@@ -310,6 +313,7 @@ export class PlaylistSessionController {
         hub.seeking = false;
         hub.lyricsVisible = false;
         hub.lyricsMode = 'read';
+        hub.lyricsViewMode = 'lyrics';
         hub.lastLyricsPayload = { lyrics: '', source: 'none', has_audio: false, lrc_data: null, lrc_raw: null };
         hub.lyricsAbortController = null;
         hub.lyricsFetchGen = 0;

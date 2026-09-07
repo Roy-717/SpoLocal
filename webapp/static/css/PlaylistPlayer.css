@@ -264,6 +264,14 @@ body { background: #121212; color: #fff; }
     background-color: rgba(255, 255, 255, 0.1);
 }
 
+#lyrics-mobile-view-switch {
+    display: none;
+    gap: 0.25rem;
+    padding: 0.2rem;
+    border-radius: 9999px;
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
 #lyrics-panel .lyrics-tab {
     padding: 0.375rem 0.875rem;
     font-size: 0.75rem;
@@ -733,6 +741,75 @@ body { background: #121212; color: #fff; }
     background: #000;
     border-radius: 0;
 }
+
+@media (max-width: 1023px) {
+    #lyrics-panel .lyrics-panel-header {
+        flex-wrap: wrap;
+        row-gap: 0.5rem;
+    }
+    #lyrics-panel .lyrics-header-main,
+    #lyrics-panel .lyrics-header-controls {
+        flex-basis: 100%;
+    }
+    #lyrics-panel .lyrics-header-controls {
+        width: 100%;
+        justify-content: space-between;
+    }
+    #lyrics-panel #lyrics-mode-switch {
+        margin-left: auto;
+    }
+    #lyrics-panel #lyrics-mobile-view-switch:not(.hidden) {
+        display: inline-flex;
+    }
+    #lyrics-panel #lyrics-mobile-view-switch:not(.hidden) + #lyrics-mode-switch {
+        margin-left: 0;
+    }
+    #lyrics-panel .lyrics-tab {
+        padding: 0.3rem 0.65rem;
+        font-size: 0.7rem;
+    }
+    #lyrics-panel #lyrics-view-wrap {
+        padding-left: 0;
+    }
+    #lyrics-panel #lyrics-body {
+        width: calc(100% - 2rem);
+        max-width: 600px;
+        margin-left: auto;
+        margin-right: auto;
+        text-align: left;
+    }
+    #lyrics-panel .lyrics-line {
+        width: 100%;
+        margin-left: 0;
+        margin-right: 0;
+        text-align: left;
+        transform-origin: left center;
+    }
+    #lyrics-panel .lyrics-line.wrap {
+        max-width: 100%;
+    }
+    #lyrics-read-row:has(#lyrics-video-pane:not(.hidden)) #lyrics-view-wrap {
+        margin-right: 0;
+    }
+    #lyrics-read-row #lyrics-video-pane:not(.hidden) {
+        display: none;
+    }
+    #lyrics-read-row.mobile-video-active #lyrics-view-wrap {
+        display: none;
+    }
+    #lyrics-read-row.mobile-video-active #lyrics-video-pane:not(.hidden) {
+        position: relative;
+        top: auto;
+        right: auto;
+        bottom: auto;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+}
+
 #player-cover-wrap.no-art #player-cover { display: none; }
 #player-cover-wrap.no-art #player-cover-fallback { display: flex; }
 #player-cover-fallback { display: none; }
@@ -759,6 +836,30 @@ body { background: #121212; color: #fff; }
     max-width: none !important;
     object-fit: cover !important;
     object-position: center !important;
+}
+/* Home: padding + 84px tiles (do not rely on Tailwind JIT for JS/home-only utilities). */
+#playlist-scroll-root:has(#home-top-playlists) {
+    padding-top: 1.5rem;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+}
+#home-header {
+    padding-bottom: 1.25rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid #282828;
+}
+#home-header + section {
+    padding-top: 0.25rem;
+}
+#home-top-playlists {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 84px);
+    justify-content: start;
+    gap: 0.75rem 1rem;
+}
+#home-top-playlists > a {
+    width: 100%;
+    max-width: 84px;
 }
 /* ── Playlists: docked sidebar on lg+; slide-over sheet on smaller screens. Downloads + queue: right sheets. ── */
 #mobile-nav-backdrop.mobile-sheet-backdrop,

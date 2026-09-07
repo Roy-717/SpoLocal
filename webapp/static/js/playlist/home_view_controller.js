@@ -114,21 +114,25 @@ export class PlaylistHomeViewController {
             const pl = catalog.get(row.id);
             const card = document.createElement('a');
             card.href = '/?playlist_id=' + encodeURIComponent(row.id);
-            card.className = 'playlist-spa-nav group w-full max-w-[84px] mx-auto rounded-md bg-[#181818] p-1.5 hover:bg-[#282828] transition-colors';
+            card.className = 'playlist-spa-nav group rounded-md bg-[#181818] p-2 hover:bg-[#282828] transition-colors';
             const art = document.createElement('div');
-            art.className = 'grid aspect-square w-full grid-cols-2 overflow-hidden rounded-sm bg-[#1a1a1a] mb-1';
+            art.className = 'playlist-art-grid grid aspect-square w-full min-h-0 min-w-0 grid-cols-2 overflow-hidden rounded-sm bg-[#1a1a1a] mb-1';
             art.style.gridTemplateRows = 'repeat(2, minmax(0, 1fr))';
             art.style.gap = '1px';
             const tiles = (pl && pl.cover_tiles) || [];
             for (let i = 0; i < 4; i++) {
                 const cell = document.createElement('div');
-                cell.className = 'h-full w-full bg-[#282828]';
+                cell.className = 'playlist-art-grid__cell h-full w-full bg-[#282828]';
                 if (tiles[i]) {
                     const img = document.createElement('img');
                     img.src = tiles[i];
                     img.alt = '';
                     img.loading = 'lazy';
-                    img.className = 'h-full w-full object-cover';
+                    img.decoding = 'async';
+                    img.onerror = function () {
+                        this.onerror = null;
+                        this.style.opacity = '0';
+                    };
                     cell.appendChild(img);
                 }
                 art.appendChild(cell);
@@ -175,7 +179,7 @@ export class PlaylistHomeViewController {
         ranked.forEach((row, idx) => {
             const t = row.track;
             const row_el = document.createElement('div');
-            row_el.className = 'track-row home-song-row track-row--playable flex items-center gap-3 rounded-md px-2 py-2 hover:bg-[#282828]';
+            row_el.className = 'track-row home-song-row track-row--playable flex items-center gap-3 rounded-md px-1 py-1.5 hover:bg-[#282828]';
             row_el.dataset.playlistId = t.playlist_id;
             row_el.dataset.trackId = t.track_id;
             row_el.dataset.playSrc = t.play_src;

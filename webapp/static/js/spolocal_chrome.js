@@ -1057,6 +1057,17 @@ document.addEventListener('click', function (e) {
     let recs_cache_pid = '';
     let recs_cache_hits = [];
 
+    function recs_playback_is_low() {
+        const prefs = window.SpolocalQualityPrefs;
+        return !!(prefs && prefs.playbackKbps() <= 64);
+    }
+
+    function set_recs_load_button_visible(show) {
+        const btn = document.getElementById('playlist-recommendations-load');
+        if (!btn) return;
+        btn.classList.toggle('hidden', !show);
+    }
+
     function set_recs_refresh_busy(busy) {
         const btn = document.getElementById('playlist-recommendations-refresh');
         if (!btn) return;
@@ -1090,6 +1101,7 @@ document.addEventListener('click', function (e) {
                     msg.textContent = 'Could not load recommendations.';
                     msg.classList.remove('hidden');
                 }
+                if (recs_playback_is_low()) set_recs_load_button_visible(true);
                 return;
             }
             const hits = await r.json();
@@ -1102,9 +1114,11 @@ document.addEventListener('click', function (e) {
                     msg.textContent = 'No recommendations right now. Try search above or add more tracks.';
                     msg.classList.remove('hidden');
                 }
+                if (recs_playback_is_low()) set_recs_load_button_visible(true);
                 return;
             }
             if (msg) msg.classList.add('hidden');
+            set_recs_load_button_visible(false);
             recs_cache_pid = String(pid);
             recs_cache_hits = hits;
             render_playlist_recommendation_rows(grid, hits);
@@ -1117,14 +1131,31 @@ document.addEventListener('click', function (e) {
                 msg.textContent = 'Could not load recommendations (network).';
                 msg.classList.remove('hidden');
             }
+            if (recs_playback_is_low()) set_recs_load_button_visible(true);
         } finally {
             if (gen === recs_fetch_gen) set_recs_refresh_busy(false);
         }
     }
 
+    function paint_recs_cache_or_fetch(pid) {
+        const grid = document.getElementById('playlist-recommendations-grid');
+        const msg = document.getElementById('playlist-recommendations-msg');
+        if (!grid) return;
+        if (recs_cache_pid === String(pid) && recs_cache_hits.length) {
+            if (msg) {
+                msg.textContent = '';
+                msg.classList.add('hidden');
+            }
+            set_recs_load_button_visible(false);
+            render_playlist_recommendation_rows(grid, recs_cache_hits);
+            return;
+        }
+        void fetchPlaylistRecommendationsWhenVisible(pid);
+    }
+
     /**
-     * Defer /api/playlist/recommendations until the "Recommended for you" block nears the visible area
-     * (playlist pane scroll or viewport).
+     * Mix recs: mid/high only after the block is in the playlist scroll view.
+     * Low quality never auto-fetches; user clicks Load Recommendations.
      */
     function loadPlaylistRecommendations(pid) {
         disconnectPlaylistRecommendationsObserver();
@@ -1132,28 +1163,34 @@ document.addEventListener('click', function (e) {
         const grid = document.getElementById('playlist-recommendations-grid');
         const msg = document.getElementById('playlist-recommendations-msg');
         if (!section || !grid || !pid) return;
+        grid.innerHTML = '';
+        if (msg) {
+            msg.textContent = '';
+            msg.classList.add('hidden');
+        }
         const refresh_btn = document.getElementById('playlist-recommendations-refresh');
         if (refresh_btn) {
             refresh_btn.onclick = function () {
                 recs_cache_pid = '';
                 recs_cache_hits = [];
                 disconnectPlaylistRecommendationsObserver();
+                set_recs_load_button_visible(false);
                 void fetchPlaylistRecommendationsWhenVisible(pid, { fresh: true });
             };
         }
-        if (recs_cache_pid === String(pid) && recs_cache_hits.length) {
-            if (msg) {
-                msg.textContent = '';
-                msg.classList.add('hidden');
-            }
-            render_playlist_recommendation_rows(grid, recs_cache_hits);
+        const load_btn = document.getElementById('playlist-recommendations-load');
+        if (load_btn) {
+            load_btn.onclick = function () {
+                disconnectPlaylistRecommendationsObserver();
+                set_recs_load_button_visible(false);
+                paint_recs_cache_or_fetch(pid);
+            };
+        }
+        if (recs_playback_is_low()) {
+            set_recs_load_button_visible(true);
             return;
         }
-        grid.innerHTML = '';
-        if (msg) {
-            msg.textContent = '';
-            msg.classList.add('hidden');
-        }
+        set_recs_load_button_visible(false);
         let layoutTries = 0;
         function attachObserver() {
             const scrollRoot = findPlaylistScrollRoot(section);
@@ -1168,7 +1205,7 @@ document.addEventListener('click', function (e) {
                     for (let i = 0; i < entries.length; i++) {
                         if (!entries[i].isIntersecting) continue;
                         disconnectPlaylistRecommendationsObserver();
-                        void fetchPlaylistRecommendationsWhenVisible(pid);
+                        paint_recs_cache_or_fetch(pid);
                         return;
                     }
                 },
@@ -1181,14 +1218,19 @@ document.addEventListener('click', function (e) {
             playlistRecommendationsObserver = obs;
             obs.observe(section);
         }
-        // Wait until flex layout has sized #playlist-scroll-root; otherwise IO falls back to
-        // viewport and fires while recommendations are still below the inner scroll fold.
         requestAnimationFrame(function () {
             requestAnimationFrame(attachObserver);
         });
     }
 
     window.loadPlaylistRecommendations = loadPlaylistRecommendations;
+    if (typeof window !== 'undefined' && !window.__spolocalRecsQualityBound) {
+        window.__spolocalRecsQualityBound = true;
+        window.addEventListener('spolocal:playback-quality-changed', function () {
+            const pid = String(typeof window.__spaPlaylistId === 'string' ? window.__spaPlaylistId : '');
+            if (pid) loadPlaylistRecommendations(pid);
+        });
+    }
 
     function renderPage() {
         if (!gList) return;

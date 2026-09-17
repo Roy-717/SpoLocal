@@ -1110,10 +1110,21 @@ export class PlaylistTransportController {
 
     updatePlayingRow() {
         document.querySelectorAll('tr.track-row-playing').forEach(r => r.classList.remove('track-row-playing'));
-        if (this.state.hub.currentTrackId) {
-            const r = this.rowForTrack(this.state.hub.currentTrackId);
-            if (r) r.classList.add('track-row-playing');
+        const hub = this.state.hub;
+        let row = hub.currentTrackId ? this.rowForTrack(hub.currentTrackId) : null;
+        if (!row && hub.searchStreamActive) {
+            const vid = String(
+                (hub.searchStreamHit && hub.searchStreamHit.video_id)
+                || this.stream_vid_from_src(hub.audio && (hub.audio.currentSrc || hub.audio.src))
+                || ''
+            ).trim();
+            if (vid) {
+                row = document.querySelector(
+                    '#playlist-recommendations-table tr.track-row[data-youtube-video-id="' + CSS.escape(vid) + '"]'
+                );
+            }
         }
+        if (row) row.classList.add('track-row-playing');
     }
 
     stream_vid_from_src(src) {
@@ -1196,6 +1207,14 @@ export class PlaylistTransportController {
             if (icon) {
                 icon.classList.remove('fa-play', 'pl-0.5');
                 icon.classList.add('fa-pause', 'pl-0.5');
+            }
+        }
+        this.updatePlayingRow();
+        if (playing) {
+            const rec_icon = document.querySelector('tr.track-row-playing .track-play i');
+            if (rec_icon) {
+                rec_icon.classList.remove('fa-play', 'fa-stop', 'pl-0.5');
+                rec_icon.classList.add('fa-pause', 'pl-0.5');
             }
         }
         const streamBadge = hub.streamBadgeEl;

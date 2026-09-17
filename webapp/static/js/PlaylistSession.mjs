@@ -2,7 +2,7 @@
  * Playlist page session entry point.
  * Initializes the session controller and enables column resizing.
  */
-import { PlaylistSessionController } from './playlist/session.js?v=89';
+import { PlaylistSessionController } from './playlist/session.js?v=90';
 import { PlaylistColumnResizer } from './ui/column_resizer.js';
 import { PlaylistPlayerState } from './player/player_state.js';
 

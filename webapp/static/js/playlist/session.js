@@ -1,4 +1,4 @@
-import { PlaylistTransportController } from '../player/transport_controller.js?v=89';
+import { PlaylistTransportController } from '../player/transport_controller.js?v=90';
 import { PlaylistQueueController } from '../player/queue_controller.js?v=89';
 import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=89';
 import { PlaylistEditModalController } from '../ui/edit_modal_controller.js';

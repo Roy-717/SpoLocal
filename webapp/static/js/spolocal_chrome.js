@@ -309,6 +309,7 @@ document.addEventListener('click', function (e) {
     function reset_search_card_buttons() {
         activePreviewVid = null;
         document.querySelectorAll('.preview-btn').forEach(b => {
+            if (b.classList.contains('track-play--row')) return;
             b.innerHTML = '<i class="fa-solid fa-play text-black text-sm pl-0.5"></i>';
             b.classList.remove('ring-2', 'ring-white', 'scale-105');
         });
@@ -336,6 +337,7 @@ document.addEventListener('click', function (e) {
         const cur_tid = hub ? String(hub.currentTrackId || '') : '';
         activePreviewVid = playing || null;
         document.querySelectorAll('.preview-btn').forEach((b) => {
+            if (b.classList.contains('track-play--row')) return;
             const vid = (b.getAttribute('data-video-id') || '').trim();
             const lib_ids = (b.getAttribute('data-library-track-ids') || '').split(',').filter(Boolean);
             const on = !!(playing && vid && vid === playing) || !!(cur_tid && lib_ids.indexOf(cur_tid) >= 0);
@@ -464,7 +466,7 @@ document.addEventListener('click', function (e) {
         stopPreview({ restore_library: false });
         reset_search_card_buttons();
         activePreviewVid = vid;
-        if (btn) {
+        if (btn && !btn.classList.contains('track-play--row')) {
             btn.innerHTML = '<i class="fa-solid fa-stop text-black text-[10px]"></i>';
             btn.classList.add('ring-2', 'ring-white', 'scale-105');
         }

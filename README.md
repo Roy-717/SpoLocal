@@ -2,7 +2,37 @@
 
 Local Spotify-style music downloader and player. Search by Spotify URL, YouTube URL, or plain text; build playlists; download tracks into playlist folders; play them in the browser.
 
-No Spotify API keys required — playlist and track metadata come from public embed pages.
+No Spotify API keys required - playlist and track metadata come from public embed pages.
+
+## Screenshots
+
+Home, random play, most-played lists, and the player bar:
+
+![Home](docs/screenshots/home.png)
+
+Playlists and the track table:
+
+![Playlist](docs/screenshots/playlist.png)
+
+Search (Spotify / YouTube / text) and add to playlist:
+
+![Search](docs/screenshots/search.png)
+
+Playback quality, download quality, loudness, and library download:
+
+![Settings](docs/screenshots/settings.png)
+
+Synced lyrics, optional video, and solid/Milkdrop background:
+
+![Lyrics](docs/screenshots/lyrics.png)
+
+Up-next queue:
+
+![Queue](docs/screenshots/queue.png)
+
+Live download queue:
+
+![Downloads](docs/screenshots/downloads.png)
 
 ## Features
 

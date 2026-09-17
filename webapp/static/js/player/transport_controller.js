@@ -102,8 +102,9 @@ export class PlaylistTransportController {
             this.setPlayUi(true);
             this.updateMediaSessionPlaybackState();
         });
-        hub.audio.addEventListener('playing', () => {
+        hub.audio.addEventListener('playing', (event) => {
             hub._mediaDecodeRetries = 0;
+            this.record_playback_start(event);
         });
         hub.audio.addEventListener('pause', () => {
             if (this.stallRecoveryTimer) {
@@ -128,9 +129,12 @@ export class PlaylistTransportController {
                 this.lyrics.updateLyricsActiveLine();
             }
         });
-        hub.audio.addEventListener('error', () => this.handleAudioElementError());
+        hub.audio.addEventListener('error', (event) => this.handleAudioElementError(event));
 
-        hub.audio.addEventListener('loadstart', () => this.release_stream_cache_for_src());
+        hub.audio.addEventListener('loadstart', (event) => {
+            hub._audioLoadStartTimestamp = event.timeStamp;
+            this.release_stream_cache_for_src();
+        });
 
         hub.audio.addEventListener('stalled', () => this.scheduleStallRecoveryIfStillHung());
 
@@ -500,10 +504,8 @@ export class PlaylistTransportController {
         hub.audio.play().catch((err) => this.handlePlayError(err));
         if (hub.lyricsVisible && this.lyrics) this.lyrics.fetchLyrics(true);
         this.updateMediaSessionMetadata(hub.playingTracks[0], playlistId);
-        PlaylistHomeViewController.record_track_play(playlistId, trackId);
         this.update_like_button_ui();
         if (hub.queueVisible && this.queue) this.queue.render_queue_list();
-        if (hub.isHomeView && this.home) this.home.render();
     }
 
     playAtDeltaRandomMode(delta) {
@@ -1209,6 +1211,28 @@ export class PlaylistTransportController {
         this.setPlayUi(false);
     }
 
+    record_playback_start(event) {
+        const hub = this.state.hub;
+        if (!hub || this.isSearchStreamPlayback()) return;
+        if (
+            event &&
+            Number.isFinite(event.timeStamp) &&
+            Number.isFinite(hub._audioLoadStartTimestamp) &&
+            event.timeStamp < hub._audioLoadStartTimestamp
+        ) {
+            return;
+        }
+        const playlist_id = String(hub.playingPlaylistId || hub.playlistId || '').trim();
+        const track_id = String(hub.currentTrackId || '').trim();
+        if (!playlist_id || !track_id) return;
+
+        const key = playlist_id + '|' + track_id;
+        if (hub._playCountedKey === key) return;
+        hub._playCountedKey = key;
+        PlaylistHomeViewController.record_track_play(playlist_id, track_id);
+        if (hub.isHomeView && this.home) this.home.render();
+    }
+
     _resetLikeButtons(hub) {
         if (hub.btnLike) {
             hub.btnLike.disabled = false;
@@ -1526,7 +1550,6 @@ export class PlaylistTransportController {
         }
         if (hub.lyricsVisible && this.lyrics) this.lyrics.fetchLyrics(true);
         this.updateMediaSessionMetadata(t);
-        PlaylistHomeViewController.record_track_play(sourcePidFinal, trackId);
         this.update_like_button_ui();
         if (hub.queueVisible && this.queue) this.queue.render_queue_list();
     }
@@ -1613,26 +1636,24 @@ export class PlaylistTransportController {
         norm.set_track_gain_db(db != null ? db : 0);
     }
 
-    handleAudioElementError() {
+    handleAudioElementError(event) {
         const hub = this.state.hub;
+        if (
+            event &&
+            Number.isFinite(event.timeStamp) &&
+            Number.isFinite(hub._audioLoadStartTimestamp) &&
+            event.timeStamp < hub._audioLoadStartTimestamp
+        ) {
+            return;
+        }
         if (this.isSearchStreamPlayback()) {
             this.setPlayUi(false);
             return;
         }
-        if (this.isStreamingPlayback()) {
-            this.setPlayUi(false);
-            return;
-        }
-        const err = hub.audio.error;
-        const unsupported = err && (err.code === 4 || (typeof MediaError !== 'undefined' && err.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED));
-        if (unsupported) {
-            this.setPlayUi(false);
-            if (hub.playable.length > 1) this.playAtDelta(1);
-            return;
-        }
         this.setPlayUi(false);
-        if (this.trySoftReloadCurrentAudioSource()) return;
-        if (hub.playable.length > 1) this.playAtDelta(1);
+        if (hub.subEl && hub.currentTrackId) {
+            hub.subEl.textContent = 'Playback unavailable. Check the connection or certificate.';
+        }
     }
 
     scheduleStallRecoveryIfStillHung() {

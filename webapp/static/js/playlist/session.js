@@ -1,6 +1,6 @@
-import { PlaylistTransportController } from '../player/transport_controller.js';
+import { PlaylistTransportController } from '../player/transport_controller.js?v=88';
 import { PlaylistQueueController } from '../player/queue_controller.js';
-import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=74';
+import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=88';
 import { PlaylistEditModalController } from '../ui/edit_modal_controller.js';
 import { PlaylistContextMenuController } from '../ui/context_menu_controller.js';
 import { PlaylistDownloadController } from '../services/download_controller.js';
@@ -222,6 +222,7 @@ export class PlaylistSessionController {
         hub.coverWrap = document.getElementById('player-cover-wrap');
         hub.lyricsPanel = document.getElementById('lyrics-panel');
         hub.lyricsTitle = document.getElementById('lyrics-title');
+        hub.lyricsVisualizerModeSelect = document.getElementById('lyrics-visualizer-mode');
         hub.lyricsModeSwitch = document.getElementById('lyrics-mode-switch');
         hub.lyricsMobileViewSwitch = document.getElementById('lyrics-mobile-view-switch');
         hub.lyricsTabLyrics = document.getElementById('lyrics-tab-lyrics');
@@ -308,12 +309,15 @@ export class PlaylistSessionController {
         hub.currentTrackId = null;
         hub.lastPlayedTrackSnapshot = null;
         hub.playingPlaylistId = null;
+        hub._playCountedKey = '';
+        hub._audioLoadStartTimestamp = 0;
         hub.playingTracks = [];
         hub.playingPlayable = [];
         hub.seeking = false;
         hub.lyricsVisible = false;
         hub.lyricsMode = 'read';
         hub.lyricsViewMode = 'lyrics';
+        hub.lyricsVisualizerMode = 'solid';
         hub.lastLyricsPayload = { lyrics: '', source: 'none', has_audio: false, lrc_data: null, lrc_raw: null };
         hub.lyricsAbortController = null;
         hub.lyricsFetchGen = 0;

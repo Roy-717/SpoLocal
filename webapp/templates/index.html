@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="/static/app.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script>window.__likedPlaylistId = {{ liked_playlist_id | tojson }};</script>
-    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=33">
+    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=34">
 </head>
 <body class="font-sans h-screen flex flex-col overflow-hidden">
     <!-- Top bar -->
@@ -406,12 +406,11 @@
             <div class="lyrics-panel-header flex items-center justify-between gap-3 shrink-0">
                 <div class="lyrics-header-main flex items-center gap-3 min-w-0">
                     <span id="lyrics-title" class="text-xs font-semibold uppercase tracking-wider shrink-0">Lyrics</span>
-                    <select id="lyrics-viz-pack" class="lyrics-viz-pack" title="Background visualizer" aria-label="Visualizer style">
-                        <option value="auto">Auto</option>
-                        <option value="electronic">Electronic</option>
-                        <option value="rock">Rock</option>
-                        <option value="ambient">Ambient</option>
-                        <option value="pop">Pop</option>
+                    <select id="lyrics-visualizer-mode"
+                            class="lyrics-visualizer-mode"
+                            title="Visualizer"
+                            aria-label="Visualizer">
+                        <option value="solid">Solid color</option>
                         <option value="milkdrop">Milkdrop</option>
                     </select>
                 </div>
@@ -585,9 +584,14 @@
     <script type="application/json" id="spolocal-player-boot">{{ {"playlistId": current.id if current else none, "isHome": is_home|default(false), "libraryPool": home_library_pool|default([], true), "catalog": playlist_catalog|default([], true)} | tojson | safe }}</script>
     <script src="/static/js/audio_quality_prefs.js?v=3"></script>
     <script src="/static/js/audio_normalization_prefs.js?v=3"></script>
-    <script src="https://cdn.jsdelivr.net/npm/butterchurn@2.6.7/lib/butterchurn.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresets.min.js"></script>
-    <script type="module" src="/static/js/PlaylistSession.mjs?v=74"></script>
+    <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@3.0.0-beta.4/dist/base.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js"></script>
+    <script type="module">
+        import butterchurn from 'https://cdn.jsdelivr.net/npm/butterchurn@3.0.0-beta.5/dist/butterchurn.min.js';
+        window.butterchurn = butterchurn && butterchurn.default ? butterchurn.default : butterchurn;
+        window.dispatchEvent(new Event('spolocal-butterchurn-ready'));
+    </script>
+    <script type="module" src="/static/js/PlaylistSession.mjs?v=88"></script>
     <script type="module" src="/static/pwa/pwa-entry.js"></script>
     <script src="/static/js/spolocal_chrome.js?v=19" defer></script>
 </body>

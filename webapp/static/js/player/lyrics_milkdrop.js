@@ -2,8 +2,6 @@
  * Butterchurn (Milkdrop) visuals behind lyrics, driven by the player AudioContext.
  */
 export class LyricsMilkdrop {
-    static LS_PACK = 'spolocal_viz_pack';
-
     static PACKS = {
         electronic: [
             'fiShbRaiN + Flexi - witchcraft 2.0',
@@ -39,10 +37,6 @@ export class LyricsMilkdrop {
         this.track_seed = '';
         this.audio_connected = false;
         this.ready = false;
-        try {
-            const saved = localStorage.getItem(LyricsMilkdrop.LS_PACK);
-            if (saved && (saved === 'auto' || LyricsMilkdrop.PACKS[saved])) this.pack = saved;
-        } catch (e) {}
         if (canvas && canvas.parentElement) {
             this.ro = new ResizeObserver(() => this.sync_size());
             this.ro.observe(canvas.parentElement);
@@ -67,7 +61,6 @@ export class LyricsMilkdrop {
     set_pack(pack) {
         const next = pack === 'auto' || LyricsMilkdrop.PACKS[pack] ? pack : 'auto';
         this.pack = next;
-        try { localStorage.setItem(LyricsMilkdrop.LS_PACK, next); } catch (e) {}
         this.load_preset_for_track();
     }
 
@@ -111,11 +104,25 @@ export class LyricsMilkdrop {
     }
 
     preset_map() {
-        const pack = window.butterchurnPresets;
-        if (!pack) return null;
-        if (typeof pack.getPresets === 'function') return pack.getPresets();
-        if (pack.default && typeof pack.default.getPresets === 'function') return pack.default.getPresets();
-        return null;
+        const sources = [
+            window.butterchurnPresets,
+            window.base,
+            window.extra,
+        ];
+        const presets = {};
+        sources.forEach((source) => {
+            const pack = source && source.default ? source.default : source;
+            if (!pack) return;
+            if (typeof pack.getPresets === 'function') {
+                Object.assign(presets, pack.getPresets() || {});
+                return;
+            }
+            if (typeof pack !== 'object' || Array.isArray(pack)) return;
+            Object.entries(pack).forEach(([name, preset]) => {
+                if (preset && typeof preset === 'object') presets[name] = preset;
+            });
+        });
+        return Object.keys(presets).length ? presets : null;
     }
 
     ensure_visualizer() {

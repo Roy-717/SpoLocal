@@ -123,17 +123,19 @@ export class LyricsWaveField {
     }
 
     start() {
-        if (!this.ctx) return;
+        if (!this.ctx) return false;
         this.held = false;
+        this.canvas.classList.remove('hidden');
         this.sync_size();
-        if (this.running) return;
+        if (this.running) return true;
         if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
             this.paint();
-            return;
+            return true;
         }
         this.running = true;
         this.last_ms = 0;
         this.raf = requestAnimationFrame((ms) => this.tick(ms));
+        return true;
     }
 
     stop() {
@@ -141,6 +143,7 @@ export class LyricsWaveField {
         this.running = false;
         if (this.raf) cancelAnimationFrame(this.raf);
         this.raf = 0;
+        if (this.canvas) this.canvas.classList.add('hidden');
     }
 
     on_visibility() {
@@ -188,7 +191,6 @@ export class LyricsWaveField {
         this.last_ms = ms;
         this._amp = mood.amp * (1 + bass * 0.55 + this.hit * 0.7);
         this._glow = mood.glow * (0.55 + this.energy.treble * 1.1 + this.hit * 0.6);
-        this._thick_mul = 1 + this.hit * 0.35 + bass * 0.2;
         this.paint();
         this.raf = requestAnimationFrame((next) => this.tick(next));
     }
@@ -244,93 +246,84 @@ export class LyricsWaveField {
         return pts;
     }
 
-    offset_pts(pts, dist) {
-        const out = [];
-        const mul = this._thick_mul == null ? 1 : this._thick_mul;
-        const d = dist * mul;
-        for (let i = 0; i < pts.length; i += 1) {
-            const a = pts[Math.max(0, i - 1)];
-            const b = pts[Math.min(pts.length - 1, i + 1)];
-            const dx = b.x - a.x;
-            const dy = b.y - a.y;
-            const len = Math.hypot(dx, dy) || 1;
-            out.push({ x: pts[i].x - (dy / len) * d, y: pts[i].y + (dx / len) * d });
-        }
-        return out;
-    }
-
-    trace_smooth(pts) {
+    trace_smooth(points) {
         const ctx = this.ctx;
-        if (!pts.length) return;
+        if (!points.length) return;
         ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < pts.length - 1; i += 1) {
-            ctx.quadraticCurveTo(pts[i].x, pts[i].y, (pts[i].x + pts[i + 1].x) / 2, (pts[i].y + pts[i + 1].y) / 2);
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length - 1; i += 1) {
+            ctx.quadraticCurveTo(
+                points[i].x,
+                points[i].y,
+                (points[i].x + points[i + 1].x) / 2,
+                (points[i].y + points[i + 1].y) / 2,
+            );
         }
-        const last = pts[pts.length - 1];
+        const last = points[points.length - 1];
         ctx.lineTo(last.x, last.y);
     }
 
-    fill_ribbon(pts, thick, color_a, color_b, color_c) {
+    paint_curve(points, color, width, alpha) {
         const ctx = this.ctx;
-        const top = this.offset_pts(pts, -thick);
-        const bot = this.offset_pts(pts, thick);
-        ctx.beginPath();
-        ctx.moveTo(top[0].x, top[0].y);
-        for (let i = 1; i < top.length - 1; i += 1) {
-            ctx.quadraticCurveTo(top[i].x, top[i].y, (top[i].x + top[i + 1].x) / 2, (top[i].y + top[i + 1].y) / 2);
-        }
-        ctx.lineTo(top[top.length - 1].x, top[top.length - 1].y);
-        for (let i = bot.length - 1; i > 0; i -= 1) {
-            ctx.quadraticCurveTo(bot[i].x, bot[i].y, (bot[i].x + bot[i - 1].x) / 2, (bot[i].y + bot[i - 1].y) / 2);
-        }
-        ctx.closePath();
-        const g = ctx.createLinearGradient(0, 0, this.w * 0.35, this.h);
-        g.addColorStop(0, color_a);
-        g.addColorStop(0.5, color_b);
-        g.addColorStop(1, color_c || color_a);
-        ctx.fillStyle = g;
-        ctx.fill();
-    }
-
-    stroke_glow_pts(pts, width, color, alpha) {
-        const ctx = this.ctx;
-        const glow = this._glow == null ? 1 : this._glow;
         ctx.save();
-        ctx.lineJoin = 'round';
-        ctx.lineCap = 'round';
+        ctx.globalCompositeOperation = 'screen';
         ctx.strokeStyle = color;
         ctx.shadowColor = color;
-        ctx.shadowBlur = 22 * glow;
-        this.trace_smooth(pts);
-        ctx.globalAlpha = alpha * 0.3;
-        ctx.lineWidth = width + 7;
+        ctx.shadowBlur = Math.max(18, width * 1.8);
+        ctx.globalAlpha = alpha * 0.42;
+        ctx.lineWidth = width * 1.7;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        this.trace_smooth(points);
         ctx.stroke();
-        this.trace_smooth(pts);
-        ctx.shadowBlur = 10 * glow;
+        ctx.shadowBlur = Math.max(8, width * 0.55);
         ctx.globalAlpha = alpha;
         ctx.lineWidth = width;
+        this.trace_smooth(points);
         ctx.stroke();
         ctx.restore();
-        ctx.globalAlpha = 1;
     }
 
-    paint_orb(color) {
-        const ctx = this.ctx;
-        const e = this.energy;
-        const r = (0.08 + e.bass * 0.12 + this.hit * 0.1) * Math.min(this.w, this.h);
-        const x = this.layout.cx * this.w + Math.sin(this.t * 0.7) * this.w * 0.08;
-        const y = this.layout.cy * this.h + Math.cos(this.t * 0.5) * this.h * 0.06;
-        const g = ctx.createRadialGradient(x, y, 0, x, y, r * 3);
-        g.addColorStop(0, color);
-        g.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.save();
-        ctx.globalAlpha = 0.18 + e.treble * 0.2 + this.hit * 0.25;
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(x, y, r * 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+    paint_scene_forms(scene, colors, phase) {
+        const [color_a, color_b, color_c] = colors;
+        const width = Math.min(this.w, this.h) * (this.mood === 'ambient' ? 0.045 : 0.065);
+        const third_spec = { ...this.layout.spec, ph: this.layout.spec.ph + phase * 0.35 + 1.4 };
+        const first = this.sample_scene(this.layout.spec, 0);
+        const second = this.sample_scene(this.layout.spec_b, 1);
+        const third = this.sample_scene(third_spec, 0);
+
+        if (scene === 'vortex') {
+            this.paint_curve(first, color_a, width * 1.1, 0.24);
+            this.paint_curve(second, color_b, width * 0.72, 0.17);
+            this.paint_curve(third, color_c, width * 0.45, 0.11);
+            return;
+        }
+        if (scene === 'diagonal') {
+            this.paint_curve(first, color_a, width * 1.15, 0.2);
+            this.paint_curve(second, color_b, width * 0.8, 0.15);
+            return;
+        }
+        if (scene === 'cross') {
+            this.paint_curve(first, color_a, width * 1.25, 0.21);
+            this.paint_curve(second, color_b, width * 1.05, 0.17);
+            this.paint_curve(third, color_c, width * 0.52, 0.1);
+            return;
+        }
+        if (scene === 'horizon') {
+            this.paint_curve(first, color_a, width * 1.3, 0.19);
+            this.paint_curve(second, color_b, width * 0.92, 0.15);
+            this.paint_curve(third, color_c, width * 0.58, 0.1);
+            return;
+        }
+        if (scene === 'lens') {
+            this.paint_curve(first, color_a, width * 1.08, 0.22);
+            this.paint_curve(second, color_b, width * 0.86, 0.17);
+            this.paint_curve(third, color_c, width * 0.5, 0.1);
+            return;
+        }
+        this.paint_curve(first, color_a, width * 1.18, 0.2);
+        this.paint_curve(second, color_b, width * 0.9, 0.15);
+        this.paint_curve(third, color_c, width * 0.5, 0.1);
     }
 
     paint() {
@@ -340,7 +333,14 @@ export class LyricsWaveField {
         const pal = this.palette;
         const fills = pal.fills || [];
         const strokes = pal.strokes || [];
-        ctx.fillStyle = pal.bg || '#0a1a16';
+        const background = ctx.createLinearGradient(0, 0, this.w, this.h);
+        const base = pal.bg || '#0a1a16';
+        const first_fill = fills[0] || base;
+        const last_fill = fills[2] || first_fill;
+        background.addColorStop(0, base);
+        background.addColorStop(0.55, first_fill);
+        background.addColorStop(1, last_fill);
+        ctx.fillStyle = background;
         ctx.fillRect(0, 0, this.w, this.h);
 
         ctx.save();
@@ -350,32 +350,15 @@ export class LyricsWaveField {
             ctx.translate(-this.w / 2, -this.h / 2);
         }
 
-        const a = fills[0] || pal.bg;
-        const b = fills[1] || a;
-        const c = fills[2] || a;
-        const gold = strokes[0] || '#e8c56b';
-        const gold_b = strokes[1] || gold;
+        const color_a = strokes[0] || fills[0] || '#e8c56b';
+        const color_b = strokes[1] || fills[1] || color_a;
+        const color_c = strokes[2] || fills[2] || color_a;
         const scene = this.layout.scene;
-        const thick_a = this.layout.spec.thick * this.h;
-        const thick_b = this.layout.spec_b.thick * this.h;
-
-        if (scene === 'ribbon' || scene === 'lens') {
-            const p0 = this.sample_scene(this.layout.spec, 0);
-            this.fill_ribbon(p0, thick_a, a, b, c);
-            this.stroke_glow_pts(this.offset_pts(p0, -thick_a * 0.25), 2.4, gold, 0.92);
-        } else if (scene === 'vortex') {
-            const p0 = this.sample_scene(this.layout.spec, 0);
-            this.fill_ribbon(p0, thick_a * 0.7, a, b, c);
-            this.stroke_glow_pts(p0, 2.2, gold, 0.88);
-        } else {
-            const p0 = this.sample_scene(this.layout.spec, 0);
-            const p1 = this.sample_scene(this.layout.spec_b, 1);
-            this.fill_ribbon(p0, thick_a, a, b, c);
-            this.fill_ribbon(p1, thick_b, b, c, a);
-            this.stroke_glow_pts(this.offset_pts(p0, -thick_a * 0.22), 2.3, gold, 0.9);
-            this.stroke_glow_pts(this.offset_pts(p1, thick_b * 0.18), 2.0, gold_b, 0.72);
-        }
+        const e = this.energy;
+        const bass = e.bass || 0;
+        const beat = this.hit || 0;
+        const phase = this.t + this.layout.spec.ph;
+        this.paint_scene_forms(scene, [color_a, color_b, color_c], phase + bass * 0.6 + beat * 0.3);
         ctx.restore();
-        this.paint_orb(gold);
     }
 }

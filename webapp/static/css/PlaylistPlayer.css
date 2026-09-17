@@ -231,18 +231,6 @@ body { background: #121212; color: #fff; }
     z-index: 0;
     opacity: 0.85;
 }
-.lyrics-viz-pack {
-    max-width: 7.5rem;
-    height: 1.5rem;
-    padding: 0 0.35rem;
-    border: 0;
-    border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.85);
-    font-size: 0.65rem;
-    font-weight: 600;
-    cursor: pointer;
-}
 #lyrics-panel .lyrics-panel-header,
 #lyrics-read-row,
 #lyrics-edit-wrap {
@@ -262,6 +250,19 @@ body { background: #121212; color: #fff; }
     padding: 0.25rem;
     border-radius: 9999px;
     background-color: rgba(255, 255, 255, 0.1);
+}
+
+.lyrics-visualizer-mode {
+    max-width: 7.5rem;
+    height: 1.75rem;
+    padding: 0 0.45rem;
+    border: 0;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
 }
 
 #lyrics-mobile-view-switch {

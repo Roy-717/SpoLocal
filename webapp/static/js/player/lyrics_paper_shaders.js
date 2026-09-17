@@ -23,6 +23,7 @@ export class LyricsPaperShaders {
         this.mount = null;
         this.running = false;
         this.mood = 'pop';
+        this.track_key = '';
         this.palette = LyricsPaperShaders.default_palette();
         this.raf = 0;
         this.ok = false;
@@ -63,11 +64,15 @@ export class LyricsPaperShaders {
     color_list() {
         const fills = (this.palette.fills || []).map((c) => this.hex_or_rgb(c));
         const base = fills[0] || this.hex_or_rgb(this.palette.bg);
-        const accent = fills[1] || fills[2] || base;
+        const accent = fills[1] || base;
+        const third = fills[2] || accent;
+        const fourth = fills[3] || base;
         const unique = [
-            this.blend_toward(base, [0, 0, 0, 1], 0.28),
-            base,
-            this.blend_toward(accent, base, 0.84),
+            this.blend_toward(base, [0, 0, 0, 1], 0.24),
+            this.blend_toward(base, accent, 0.38),
+            this.blend_toward(accent, third, 0.52),
+            this.blend_toward(third, fourth, 0.42),
+            this.blend_toward(fourth, base, 0.36),
         ];
         this._color_count = unique.length;
         const out = unique.slice();
@@ -75,13 +80,35 @@ export class LyricsPaperShaders {
         return out;
     }
 
+    hash_str(value) {
+        let hash = 2166136261;
+        const text = String(value || '');
+        for (let i = 0; i < text.length; i += 1) {
+            hash ^= text.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+        }
+        return hash >>> 0;
+    }
+
+    track_variation() {
+        const hash = this.hash_str(this.track_key);
+        const unit = (shift) => ((hash >>> shift) & 1023) / 1023;
+        return {
+            scale: 0.96 + unit(0) * 0.12,
+            rotation: (unit(10) - 0.5) * 0.18,
+            offset_x: (unit(20) - 0.5) * 0.08,
+            offset_y: (unit(30) - 0.5) * 0.08,
+        };
+    }
+
     sizing_uniforms() {
+        const variation = this.track_variation();
         return {
             u_fit: ShaderFitOptions.cover,
-            u_scale: 1,
-            u_rotation: 0,
-            u_offsetX: 0,
-            u_offsetY: 0,
+            u_scale: variation.scale,
+            u_rotation: variation.rotation,
+            u_offsetX: variation.offset_x,
+            u_offsetY: variation.offset_y,
             u_originX: 0.5,
             u_originY: 0.5,
             u_worldWidth: 0,
@@ -114,6 +141,11 @@ export class LyricsPaperShaders {
 
     set_mood(mood) {
         this.mood = LyricsPaperShaders.MOOD[mood] ? mood : 'pop';
+        this.push_uniforms();
+    }
+
+    set_track_key(title, artist) {
+        this.track_key = `${title || ''}|${artist || ''}`;
         this.push_uniforms();
     }
 

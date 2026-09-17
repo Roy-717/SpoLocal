@@ -582,7 +582,7 @@
 
     <script type="application/json" id="playlist-json">{{ current_tracks_payload | default([], true) | tojson | safe }}</script>
     <script type="application/json" id="spolocal-player-boot">{{ {"playlistId": current.id if current else none, "isHome": is_home|default(false), "libraryPool": home_library_pool|default([], true), "catalog": playlist_catalog|default([], true)} | tojson | safe }}</script>
-    <script src="/static/js/audio_quality_prefs.js?v=3"></script>
+    <script src="/static/js/audio_quality_prefs.js?v=4"></script>
     <script src="/static/js/audio_normalization_prefs.js?v=3"></script>
     <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@3.0.0-beta.4/dist/base.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js"></script>
@@ -591,8 +591,8 @@
         window.butterchurn = butterchurn && butterchurn.default ? butterchurn.default : butterchurn;
         window.dispatchEvent(new Event('spolocal-butterchurn-ready'));
     </script>
-    <script type="module" src="/static/js/PlaylistSession.mjs?v=88"></script>
+        <script type="module" src="/static/js/PlaylistSession.mjs?v=89"></script>
     <script type="module" src="/static/pwa/pwa-entry.js"></script>
-    <script src="/static/js/spolocal_chrome.js?v=19" defer></script>
+    <script src="/static/js/spolocal_chrome.js?v=21" defer></script>
 </body>
 </html>

@@ -194,7 +194,10 @@ export class PlaylistHomeViewController {
             const art = document.createElement('div');
             art.className = 'h-10 w-10 shrink-0 overflow-hidden rounded bg-[#1a1a1a]';
             const img = document.createElement('img');
-            img.src = '/playlists/' + encodeURIComponent(t.playlist_id) + '/tracks/' + encodeURIComponent(t.track_id) + '/cover';
+            const covers = window.SpolocalCoverUrls;
+            img.src = covers
+                ? covers.trackCoverUrl(t.playlist_id, t.track_id, t.youtube_video_id)
+                : ('/playlists/' + encodeURIComponent(t.playlist_id) + '/tracks/' + encodeURIComponent(t.track_id) + '/cover');
             img.alt = '';
             img.loading = 'lazy';
             img.className = 'h-full w-full object-cover';

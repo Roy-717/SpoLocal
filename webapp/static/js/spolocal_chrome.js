@@ -84,8 +84,29 @@ document.addEventListener('click', function (e) {
 
     function withCoverCacheBust(url, bust) {
         if (!url) return url;
-        const base = String(url).split('?')[0];
-        return base + '?v=' + (bust != null ? bust : Date.now());
+        try {
+            const u = new URL(url, location.origin);
+            u.searchParams.set('v', String(bust != null ? bust : Date.now()));
+            const q = u.searchParams.toString();
+            return u.pathname + (q ? '?' + q : '');
+        } catch (e) {
+            const base = String(url).split('?')[0];
+            return base + '?v=' + (bust != null ? bust : Date.now());
+        }
+    }
+
+    function withCoverQuality(url) {
+        const covers = window.SpolocalCoverUrls;
+        if (!covers || !url) return url;
+        try {
+            const u = new URL(url, location.origin);
+            if (u.pathname.indexOf('/tracks/') >= 0 && /\/cover\/?$/.test(u.pathname)) {
+                u.searchParams.set('q', covers.qualityKey());
+                const q = u.searchParams.toString();
+                return u.pathname + (q ? '?' + q : '');
+            }
+        } catch (e) {}
+        return url;
     }
 
     function buildPlaylistArtGridEl(tiles, sizeClass, bust) {
@@ -101,7 +122,7 @@ document.addEventListener('click', function (e) {
                 const cell = document.createElement('div');
                 cell.className = 'playlist-art-grid__cell h-full w-full bg-[#282828]';
                 const img = document.createElement('img');
-                img.src = withCoverCacheBust(arr[i], cacheBust);
+                img.src = withCoverCacheBust(withCoverQuality(arr[i]), cacheBust);
                 img.alt = '';
                 img.loading = 'lazy';
                 img.decoding = 'async';
@@ -712,13 +733,17 @@ document.addEventListener('click', function (e) {
         img.decoding = 'async';
         img.className = 'h-full w-full object-cover';
         const vid = hit.video_id || '';
-        img.src = vid
-            ? ('https://i.ytimg.com/vi/' + encodeURIComponent(vid) + '/default.jpg')
-            : (hit.thumbnail_url || '');
+        const covers = window.SpolocalCoverUrls;
+        img.src = (covers && vid)
+            ? covers.youtubeThumbUrl(vid)
+            : (vid
+                ? ('https://i.ytimg.com/vi/' + encodeURIComponent(vid) + '/default.jpg')
+                : (hit.thumbnail_url || ''));
         img.addEventListener('error', function () {
             this.onerror = null;
             if (vid) {
-                this.src = 'https://i.ytimg.com/vi/' + encodeURIComponent(vid) + '/mqdefault.jpg';
+                this.src = (covers && covers.youtubeThumbFallbackUrl(vid))
+                    || ('https://i.ytimg.com/vi/' + encodeURIComponent(vid) + '/mqdefault.jpg');
             }
         });
         artWrap.appendChild(img);
@@ -834,6 +859,170 @@ document.addEventListener('click', function (e) {
         container.appendChild(grid);
     }
 
+    function rec_hit_cover_src(hit) {
+        const vid = (hit && hit.video_id) ? String(hit.video_id) : '';
+        const covers = window.SpolocalCoverUrls;
+        if (vid && covers) return covers.youtubeThumbUrl(vid);
+        if (vid) return 'https://i.ytimg.com/vi/' + encodeURIComponent(vid) + '/default.jpg';
+        return (hit && hit.thumbnail_url) ? String(hit.thumbnail_url) : '';
+    }
+
+    function build_recommendation_row(hit, index) {
+        const vid = (hit && hit.video_id) ? String(hit.video_id) : '';
+        const tr = document.createElement('tr');
+        tr.className = 'track-row border-b border-[#282828]' + (vid ? ' track-row--playable' : '');
+        if (vid) tr.setAttribute('data-youtube-video-id', vid);
+
+        const td_idx = document.createElement('td');
+        td_idx.className = 'py-2 pl-0 pr-0 align-middle';
+        const slot = document.createElement('div');
+        slot.className = 'track-index-slot relative flex h-8 w-8 items-center justify-center';
+        const idx_el = document.createElement('span');
+        idx_el.className = 'track-row-index pointer-events-none absolute inset-0 flex items-center justify-center text-[#727272] tabular-nums';
+        idx_el.textContent = String(index);
+        slot.appendChild(idx_el);
+        if (vid) {
+            const play_btn = document.createElement('button');
+            play_btn.type = 'button';
+            play_btn.className = 'preview-btn track-play track-play--row absolute inset-0 z-[1] flex h-8 w-8 items-center justify-center rounded-full bg-white text-black transition-opacity';
+            play_btn.title = 'Play';
+            play_btn.setAttribute('data-video-id', vid);
+            const lib_ids = (Array.isArray(hit.library_matches) ? hit.library_matches : [])
+                .map(function (m) { return String(m.track_id || ''); })
+                .filter(Boolean)
+                .join(',');
+            if (lib_ids) play_btn.setAttribute('data-library-track-ids', lib_ids);
+            play_btn.innerHTML = '<i class="fa-solid fa-play text-[10px] pl-0.5"></i>';
+            play_btn.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                playPreview(hit, play_btn);
+            });
+            slot.appendChild(play_btn);
+        }
+        td_idx.appendChild(slot);
+        tr.appendChild(td_idx);
+
+        const td_art = document.createElement('td');
+        td_art.className = 'py-2 pl-1 pr-3 align-middle';
+        const art = document.createElement('div');
+        art.className = 'h-10 w-10 overflow-hidden rounded bg-[#1a1a1a]';
+        art.setAttribute('aria-hidden', 'true');
+        const img = document.createElement('img');
+        img.alt = '';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.className = 'h-full w-full object-cover';
+        img.src = rec_hit_cover_src(hit);
+        if (vid) img.setAttribute('data-video-id', vid);
+        img.addEventListener('error', function () {
+            this.onerror = null;
+            const covers = window.SpolocalCoverUrls;
+            if (vid) {
+                this.src = (covers && covers.youtubeThumbFallbackUrl(vid))
+                    || ('https://i.ytimg.com/vi/' + encodeURIComponent(vid) + '/mqdefault.jpg');
+            } else {
+                this.style.opacity = '0';
+            }
+        });
+        art.appendChild(img);
+        td_art.appendChild(art);
+        tr.appendChild(td_art);
+
+        const title = (hit && hit.title) ? String(hit.title) : '';
+        const td_title = document.createElement('td');
+        td_title.className = 'track-row-title py-3 px-1 font-medium truncate';
+        td_title.title = title;
+        td_title.textContent = title;
+        tr.appendChild(td_title);
+
+        const artist = (hit && (hit.artist || hit.channel)) ? String(hit.artist || hit.channel) : '';
+        const td_artist = document.createElement('td');
+        td_artist.className = 'track-row-artist py-3 px-1 text-[#B3B3B3] truncate';
+        td_artist.title = artist;
+        td_artist.textContent = artist;
+        tr.appendChild(td_artist);
+
+        const td_dur = document.createElement('td');
+        td_dur.className = 'py-3 px-1 text-right text-[#727272] tabular-nums text-xs';
+        td_dur.textContent = fmtDur(hit && hit.duration_sec);
+        tr.appendChild(td_dur);
+
+        const td_add = document.createElement('td');
+        td_add.className = 'py-2 pr-1 align-middle text-right';
+        const add_btn = document.createElement('button');
+        add_btn.type = 'button';
+        add_btn.className = 'inline-flex h-8 w-8 items-center justify-center rounded-full text-[#B3B3B3] hover:text-white';
+        add_btn.title = 'Add to this playlist';
+        add_btn.setAttribute('aria-label', 'Add to this playlist');
+        add_btn.innerHTML = '<i class="fa-solid fa-plus text-sm"></i>';
+        add_btn.addEventListener('click', async function (ev) {
+            ev.stopPropagation();
+            ev.preventDefault();
+            const pl_id = String(window.__spaPlaylistId || new URL(location.href).searchParams.get('playlist_id') || '');
+            if (!pl_id) return;
+            add_btn.disabled = true;
+            try {
+                await addTrackToPlaylist(pl_id, hit);
+            } catch (e) {
+                alert(e && e.message ? e.message : 'Could not add track.');
+            } finally {
+                add_btn.disabled = false;
+            }
+        });
+        td_add.appendChild(add_btn);
+        tr.appendChild(td_add);
+
+        if (vid) {
+            tr.addEventListener('click', function (ev) {
+                if (ev.target.closest('button')) return;
+                const btn = tr.querySelector('.preview-btn');
+                playPreview(hit, btn);
+            });
+        }
+        return tr;
+    }
+
+    function render_playlist_recommendation_rows(container, hits) {
+        if (!container) return;
+        container.innerHTML = '';
+        if (!hits || !hits.length) return;
+        const table = document.createElement('table');
+        table.className = 'w-full text-sm table-fixed';
+        table.setAttribute('id', 'playlist-recommendations-table');
+        const colgroup = document.createElement('colgroup');
+        [
+            ['0', '2rem'],
+            ['1', '2.5rem'],
+            ['2', '28%'],
+            ['3', '22%'],
+            ['4', '3.5rem'],
+            ['5', '2.5rem'],
+        ].forEach(function (pair) {
+            const col = document.createElement('col');
+            col.setAttribute('data-col', pair[0]);
+            col.style.width = pair[1];
+            colgroup.appendChild(col);
+        });
+        table.appendChild(colgroup);
+        const thead = document.createElement('thead');
+        thead.innerHTML = '<tr class="text-[#727272] text-left border-b border-[#282828]">'
+            + '<th class="py-3 pl-0 pr-0 text-left" data-col="0">#</th>'
+            + '<th class="py-3 pl-1 pr-3" data-col="1" aria-label="Art"></th>'
+            + '<th class="py-3 px-3" data-col="2">TITLE</th>'
+            + '<th class="py-3 px-3" data-col="3">ARTIST</th>'
+            + '<th class="py-3 px-1 text-right" data-col="4" aria-label="Duration"></th>'
+            + '<th class="py-3 pr-2 text-right" data-col="5" aria-label="Add"></th>'
+            + '</tr>';
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        hits.forEach(function (hit, i) {
+            tbody.appendChild(build_recommendation_row(hit, i + 1));
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
+        sync_search_card_play_buttons();
+    }
+
     /** @type {IntersectionObserver|null} */
     let playlistRecommendationsObserver = null;
 
@@ -862,17 +1051,33 @@ document.addEventListener('click', function (e) {
         return null;
     }
 
-    async function fetchPlaylistRecommendationsWhenVisible(pid) {
+    let recs_fetch_gen = 0;
+
+    function set_recs_refresh_busy(busy) {
+        const btn = document.getElementById('playlist-recommendations-refresh');
+        if (!btn) return;
+        btn.disabled = !!busy;
+        btn.classList.toggle('opacity-50', !!busy);
+        btn.classList.toggle('pointer-events-none', !!busy);
+    }
+
+    async function fetchPlaylistRecommendationsWhenVisible(pid, opts) {
         const grid = document.getElementById('playlist-recommendations-grid');
         const msg = document.getElementById('playlist-recommendations-msg');
         if (!grid || !pid) return;
+        const fresh = !!(opts && opts.fresh);
+        const gen = ++recs_fetch_gen;
         grid.innerHTML = '';
+        set_recs_refresh_busy(true);
         if (msg) {
             msg.textContent = 'Loading recommendations…';
             msg.classList.remove('hidden');
         }
         try {
-            const r = await fetch('/api/playlist/recommendations?playlist_id=' + encodeURIComponent(pid) + '&limit=12');
+            let url = '/api/playlist/recommendations?playlist_id=' + encodeURIComponent(pid) + '&limit=12';
+            if (fresh) url += '&fresh=1';
+            const r = await fetch(url);
+            if (gen !== recs_fetch_gen) return;
             if (String(pid) !== String(typeof window.__spaPlaylistId === 'string' ? window.__spaPlaylistId : '')) {
                 return;
             }
@@ -884,6 +1089,7 @@ document.addEventListener('click', function (e) {
                 return;
             }
             const hits = await r.json();
+            if (gen !== recs_fetch_gen) return;
             if (String(pid) !== String(typeof window.__spaPlaylistId === 'string' ? window.__spaPlaylistId : '')) {
                 return;
             }
@@ -895,8 +1101,9 @@ document.addEventListener('click', function (e) {
                 return;
             }
             if (msg) msg.classList.add('hidden');
-            renderYoutubeHitsIntoContainer(grid, hits, 'grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-6 w-full pb-2');
+            render_playlist_recommendation_rows(grid, hits);
         } catch (e) {
+            if (gen !== recs_fetch_gen) return;
             if (String(pid) !== String(typeof window.__spaPlaylistId === 'string' ? window.__spaPlaylistId : '')) {
                 return;
             }
@@ -904,6 +1111,8 @@ document.addEventListener('click', function (e) {
                 msg.textContent = 'Could not load recommendations (network).';
                 msg.classList.remove('hidden');
             }
+        } finally {
+            if (gen === recs_fetch_gen) set_recs_refresh_busy(false);
         }
     }
 
@@ -921,6 +1130,13 @@ document.addEventListener('click', function (e) {
         if (msg) {
             msg.textContent = '';
             msg.classList.add('hidden');
+        }
+        const refresh_btn = document.getElementById('playlist-recommendations-refresh');
+        if (refresh_btn) {
+            refresh_btn.onclick = function () {
+                disconnectPlaylistRecommendationsObserver();
+                void fetchPlaylistRecommendationsWhenVisible(pid, { fresh: true });
+            };
         }
         let layoutTries = 0;
         function attachObserver() {
@@ -1074,8 +1290,37 @@ document.addEventListener('click', function (e) {
         renderSidebarPlaylistList(pid, Date.now());
     };
 
+    window.applyQualityAwareCovers = function (root) {
+        const covers = window.SpolocalCoverUrls;
+        if (!covers) return;
+        const el = root || document;
+        const pid = String(window.__spaPlaylistId || '').trim();
+        el.querySelectorAll('img[src*="/tracks/"][src*="/cover"]').forEach(function (img) {
+            const src = img.getAttribute('src');
+            if (!src) return;
+            img.src = withCoverQuality(src);
+            img.style.opacity = '';
+        });
+        el.querySelectorAll('tr.track-row[data-track-id]').forEach(function (tr) {
+            const img = tr.querySelector('img');
+            if (!img) return;
+            const tid = String(tr.getAttribute('data-track-id') || '').trim();
+            const vid = String(tr.getAttribute('data-youtube-video-id') || '').trim();
+            const next = covers.trackCoverUrl(pid, tid, vid);
+            if (next) img.src = next;
+        });
+        el.querySelectorAll('#playlist-recommendations-grid img[data-video-id], #playlist-recommendations-table img[data-video-id]').forEach(function (img) {
+            const vid = String(img.getAttribute('data-video-id') || '').trim();
+            const next = covers.youtubeThumbUrl(vid);
+            if (next) img.src = next;
+        });
+    };
+
     window.bustPlaylistCoverImages = function (root) {
         const el = root || document;
+        if (typeof window.applyQualityAwareCovers === 'function') {
+            window.applyQualityAwareCovers(el);
+        }
         const bust = Date.now();
         el.querySelectorAll('img[src*="/tracks/"][src*="/cover"]').forEach(function (img) {
             const src = img.getAttribute('src');
@@ -1084,4 +1329,10 @@ document.addEventListener('click', function (e) {
             img.style.opacity = '';
         });
     };
+
+    window.addEventListener('spolocal:playback-quality-changed', function () {
+        if (typeof window.applyQualityAwareCovers === 'function') {
+            window.applyQualityAwareCovers(document);
+        }
+    });
 })();

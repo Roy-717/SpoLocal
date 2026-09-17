@@ -219,6 +219,152 @@ class YtDlpAudioDownloader:
                 return (None, None)
 
 
+def _youtube_hit_from_entry(entry: dict) -> dict | None:
+    """Map a yt-dlp search/mix entry to the hit dict the recs/search UI already uses."""
+    if not entry:
+        return None
+    vid = entry.get("id")
+    if not vid:
+        return None
+    raw_title = (entry.get("title") or "").strip() or "(no title)"
+    channel = (entry.get("uploader") or entry.get("channel") or "").strip()
+    artist = channel or "YouTube"
+    song_title = raw_title
+    if " - " in raw_title:
+        left, right = raw_title.split(" - ", 1)
+        if left.strip() and right.strip():
+            artist = left.strip()
+            song_title = right.strip()
+    dur = entry.get("duration")
+    thumbs = entry.get("thumbnails")
+    thumbnail_url = ""
+    if isinstance(thumbs, list) and thumbs:
+        best = max(thumbs, key=lambda t: (t.get("width") or 0) * (t.get("height") or 0))
+        thumbnail_url = str(best.get("url") or "")
+    if not thumbnail_url:
+        thumbnail_url = str(entry.get("thumbnail") or "") or f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg"
+    year = None
+    ud = entry.get("upload_date")
+    if isinstance(ud, str) and len(ud) >= 4 and ud[:4].isdigit():
+        year = ud[:4]
+    elif entry.get("release_year") is not None:
+        try:
+            year = str(int(entry["release_year"]))
+        except (TypeError, ValueError):
+            year = None
+    album = None
+    raw_album = entry.get("album")
+    if raw_album is not None:
+        s = str(raw_album).strip()
+        if s:
+            album = s[:500]
+    return {
+        "video_id": vid,
+        "title": song_title,
+        "artist": artist,
+        "url": f"https://www.youtube.com/watch?v={vid}",
+        "duration_sec": int(dur) if isinstance(dur, (int, float)) else None,
+        "channel": channel,
+        "thumbnail_url": thumbnail_url,
+        "year": year,
+        "album": album,
+    }
+
+
+class YoutubePlaylistMix:
+    """Build Recommended-for-you hits from YouTube Mix (RD) of a few playlist seeds."""
+
+    def __init__(self, project_root: Path | None = None) -> None:
+        self._root = project_root or Path(__file__).resolve().parent
+
+    def mix_url(self, video_id: str) -> str:
+        # Mix is watch+list=RD{id}; /playlist?list=RD... is often "unviewable".
+        vid = (video_id or "").strip()
+        return f"https://www.youtube.com/watch?v={vid}&list=RD{vid}"
+
+    def pick_seed_ids(self, video_ids: list[str], max_seeds: int = 3) -> list[str]:
+        """Spread unique 11-char ids across the playlist so the mix is not one-song radio."""
+        unique: list[str] = []
+        seen: set[str] = set()
+        for vid in video_ids:
+            v = (vid or "").strip()
+            if len(v) == 11 and v not in seen:
+                seen.add(v)
+                unique.append(v)
+        if not unique or max_seeds <= 1:
+            return unique[:max(0, max_seeds)]
+        if len(unique) <= max_seeds:
+            return unique
+        picks: list[str] = []
+        last = len(unique) - 1
+        for i in range(max_seeds):
+            idx = round(i * last / (max_seeds - 1))
+            if unique[idx] not in picks:
+                picks.append(unique[idx])
+        return picks
+
+    def mix_for_video(self, video_id: str, limit: int = 12) -> list[dict]:
+        vid = (video_id or "").strip()
+        if len(vid) != 11:
+            return []
+        limit = max(1, min(int(limit), 30))
+        # Mix is long; pull extra so skipping the seed + overlap still leaves ~limit.
+        playlistend = min(30, max(limit + 8, 20))
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": "in_playlist",
+            "noplaylist": False,
+            "playlistend": playlistend,
+            "socket_timeout": 20,
+        }
+        info = None
+        for _ in range(2):
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(self.mix_url(vid), download=False)
+                break
+            except Exception:
+                info = None
+        hits: list[dict] = []
+        for entry in (info or {}).get("entries") or []:
+            hit = _youtube_hit_from_entry(entry)
+            if not hit:
+                continue
+            hid = hit.get("video_id")
+            if hid == vid:
+                continue
+            hits.append(hit)
+            if len(hits) >= limit:
+                break
+        return hits
+
+    def mix_for_seeds(self, video_ids: list[str], limit: int = 12) -> list[dict]:
+        seeds = self.pick_seed_ids(video_ids)
+        if not seeds:
+            return []
+        per_seed = min(30, max(limit + 8, 16))
+        buckets = [self.mix_for_video(seed, per_seed) for seed in seeds]
+        merged: list[dict] = []
+        seen: set[str] = set(seeds)
+        while len(merged) < limit and any(buckets):
+            progressed = False
+            for bucket in buckets:
+                if not bucket or len(merged) >= limit:
+                    continue
+                hit = bucket.pop(0)
+                progressed = True
+                vid = hit.get("video_id")
+                if not isinstance(vid, str) or vid in seen:
+                    continue
+                seen.add(vid)
+                merged.append(hit)
+            if not progressed:
+                break
+        return merged
+
+
 def search_youtube_tracks(project_root: Path, query: str, limit: int = 12) -> list[dict]:
     """
     Resolve YouTube search hits via yt-dlp without downloading audio.
@@ -229,34 +375,6 @@ def search_youtube_tracks(project_root: Path, query: str, limit: int = 12) -> li
     if len(q) < 2:
         return []
     limit = max(1, min(int(limit), 30))
-
-    def _best_thumbnail_url(entry: dict, video_id: str) -> str:
-        thumbs = entry.get("thumbnails")
-        if isinstance(thumbs, list) and thumbs:
-            def _area(t: dict) -> int:
-                return (t.get("width") or 0) * (t.get("height") or 0)
-
-            best = max(thumbs, key=_area)
-            u = best.get("url")
-            if u:
-                return str(u)
-        t = entry.get("thumbnail")
-        if t:
-            return str(t)
-        return f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"
-
-    def _year_from_entry(entry: dict) -> str | None:
-        ud = entry.get("upload_date")
-        if isinstance(ud, str) and len(ud) >= 4 and ud[:4].isdigit():
-            return ud[:4]
-        ry = entry.get("release_year")
-        if ry is not None:
-            try:
-                return str(int(ry))
-            except (TypeError, ValueError):
-                pass
-        return None
-
     opts = {
         "quiet": True,
         "no_warnings": True,
@@ -268,43 +386,12 @@ def search_youtube_tracks(project_root: Path, query: str, limit: int = 12) -> li
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"ytsearch{limit}:{q}", download=False)
-        entries = info.get("entries") or []
-        for e in entries:
-            if not e:
-                continue
-            vid = e.get("id")
-            if not vid:
-                continue
-            raw_title = (e.get("title") or "").strip() or "(no title)"
-            channel = (e.get("uploader") or e.get("channel") or "").strip()
-            artist = channel or "YouTube"
-            song_title = raw_title
-            if " - " in raw_title:
-                left, right = raw_title.split(" - ", 1)
-                if left.strip() and right.strip():
-                    artist = left.strip()
-                    song_title = right.strip()
-            dur = e.get("duration")
-            yr = _year_from_entry(e)
-            _album = None
-            _ar = e.get("album")
-            if _ar is not None:
-                _s = str(_ar).strip()
-                if _s:
-                    _album = _s[:500]
-            results.append(
-                {
-                    "video_id": vid,
-                    "title": song_title,
-                    "artist": artist,
-                    "url": f"https://www.youtube.com/watch?v={vid}",
-                    "duration_sec": int(dur) if isinstance(dur, (int, float)) else None,
-                    "channel": channel,
-                    "thumbnail_url": _best_thumbnail_url(e, vid),
-                    "year": yr,
-                    "album": _album,
-                }
-            )
+        for entry in info.get("entries") or []:
+            hit = _youtube_hit_from_entry(entry)
+            if hit:
+                results.append(hit)
+            if len(results) >= limit:
+                break
     except Exception:
         pass
     return results

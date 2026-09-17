@@ -1605,7 +1605,11 @@ export class PlaylistLyricsController {
             if (vid) this.load_youtube_cover(vid);
             return;
         }
-        const url = '/playlists/' + encodeURIComponent(pid) + '/tracks/' + encodeURIComponent(trackId) + '/cover';
+        const covers = window.SpolocalCoverUrls;
+        const vid = this.current_youtube_vid();
+        const url = covers
+            ? covers.trackCoverUrl(pid, trackId, vid)
+            : ('/playlists/' + encodeURIComponent(pid) + '/tracks/' + encodeURIComponent(trackId) + '/cover');
         this.load_cover_url(url);
         if (hub.lyricsVisible) this.sync_lyrics_visuals();
     }
@@ -1613,7 +1617,8 @@ export class PlaylistLyricsController {
     load_youtube_cover(vid) {
         const id = String(vid || '').trim();
         if (!id) return;
-        this.load_cover_url('/api/thumb?vid=' + encodeURIComponent(id));
+        const covers = window.SpolocalCoverUrls;
+        this.load_cover_url(covers ? covers.youtubeThumbApiUrl(id) : ('/api/thumb?vid=' + encodeURIComponent(id)));
     }
 
     load_cover_url(url) {

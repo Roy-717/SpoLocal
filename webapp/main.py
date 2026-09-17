@@ -18,7 +18,7 @@ import asyncio
 import httpx
 import yt_dlp as _yt_dlp
 
-from fastapi import FastAPI, Request, Form, HTTPException, Query
+from fastapi import FastAPI, Request, Form, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
@@ -58,49 +58,6 @@ def _youtube_video_id_from_track_metadata(artist: str, title: str) -> Optional[s
     return None
 
 
-def build_playlist_recommendation_query(pl: Playlist) -> str:
-    """Combine playlist name with 2–4 distinct artists/titles for YouTube search."""
-    base = (pl.name or "").strip() or "music"
-    tracks = list(pl.tracks or [])
-    if not tracks:
-        return base
-
-    artists_order: list[str] = []
-    titles_order: list[str] = []
-    seen_a: set[str] = set()
-    seen_t: set[str] = set()
-    for t in tracks:
-        a = (t.artist or "").strip()
-        if a and a.casefold() not in seen_a:
-            seen_a.add(a.casefold())
-            artists_order.append(a)
-        tt = (t.title or "").strip()
-        if tt and tt.casefold() not in seen_t:
-            seen_t.add(tt.casefold())
-            titles_order.append(tt)
-
-    tokens: list[str] = []
-    i = j = 0
-    while len(tokens) < 4 and (i < len(artists_order) or j < len(titles_order)):
-        take_artist = len(tokens) % 2 == 0
-        if take_artist and i < len(artists_order):
-            tokens.append(artists_order[i])
-            i += 1
-        elif j < len(titles_order):
-            tokens.append(titles_order[j])
-            j += 1
-        elif i < len(artists_order):
-            tokens.append(artists_order[i])
-            i += 1
-        else:
-            break
-
-    parts = [base] + tokens
-    q = " ".join(parts)
-    if len(q) > 200:
-        q = q[:200].rsplit(" ", 1)[0].strip()
-    return q or base
-
 _webapp_dir = Path(__file__).resolve().parent
 load_dotenv(_webapp_dir / ".env")
 
@@ -124,13 +81,13 @@ import sys
 
 if str(root) not in sys.path:
     sys.path.insert(0, str(root))
-from spotify_scraper import search_youtube_tracks
+from spotify_scraper import YoutubePlaylistMix, search_youtube_tracks
 
 service = DownloadService(root)
 
 # Keep the same googlevideo URL for the whole song. Refresh only on CDN 403.
 _PREVIEW_CACHE_TTL_SECONDS = 6 * 3600
-_PREVIEW_CACHE_MAX_ENTRIES = 2000
+_PREVIEW_CACHE_MAX_ENTRIES = 24
 _SEARCH_PREVIEW_LIMIT = 6
 _SEARCH_CACHE_MAX_RESULTS = 30
 _SEARCH_CACHE_TTL_SECONDS = 180
@@ -195,13 +152,6 @@ def _release_preview_cache(video_id: Optional[str] = None) -> None:
         return
     _preview_cache.clear()
     _video_cache.clear()
-
-
-def _keep_preview_cache_only(video_id: str) -> None:
-    keep = video_id.strip()
-    for vid in list(_preview_cache.keys()):
-        if vid != keep:
-            _preview_cache.pop(vid, None)
 
 
 def _recommendation_cache_cleanup(now: float) -> None:
@@ -760,6 +710,7 @@ async def _get_preview_payload(video_id: str) -> YoutubeCdnAudio:
     now = _now_ts()
     entry = _preview_cache.get(video_id)
     if entry is not None and entry[1] > now:
+        _preview_cache[video_id] = (entry[0], now + _PREVIEW_CACHE_TTL_SECONDS)
         return entry[0]
 
     pending = _preview_inflight.get(video_id)
@@ -773,6 +724,33 @@ async def _get_preview_payload(video_id: str) -> YoutubeCdnAudio:
     finally:
         if _preview_inflight.get(video_id) is pending:
             _preview_inflight.pop(video_id, None)
+
+
+async def _prefetch_one_preview(video_id: str) -> None:
+    try:
+        await _get_preview_payload(video_id)
+    except Exception as exc:
+        _stream_log.debug("prefetch skip vid=%s err=%s", video_id, exc)
+
+
+async def _prefetch_mix_stream_payloads(video_ids: list[str]) -> None:
+    seen: list[str] = []
+    for raw in video_ids:
+        vid = str(raw or "").strip()
+        if not vid or vid in seen:
+            continue
+        seen.append(vid)
+        if len(seen) >= _PREVIEW_CACHE_MAX_ENTRIES:
+            break
+    if not seen:
+        return
+    sem = asyncio.Semaphore(4)
+
+    async def _one(vid: str) -> None:
+        async with sem:
+            await _prefetch_one_preview(vid)
+
+    await asyncio.gather(*[_one(v) for v in seen])
 
 
 def _video_fmt_url(info: dict[str, Any]) -> tuple[str, str, Optional[int], dict[str, str]]:
@@ -859,6 +837,61 @@ def _annotate_library_matches(hits: list[dict[str, Any]]) -> None:
             str(hit.get("title") or ""),
             str(hit.get("artist") or hit.get("channel") or ""),
         )
+
+
+class YoutubeThumbQuality:
+    """Map playback quality to YouTube still filenames and local JPEG size."""
+
+    @staticmethod
+    def parse(q: Any) -> str:
+        s = str(q or "").strip().lower()
+        if s in ("low", "64", "64k"):
+            return "low"
+        if s in ("mid", "medium", "120", "120k"):
+            return "mid"
+        return "high"
+
+    @staticmethod
+    def files(tier: str) -> tuple[str, ...]:
+        if tier == "low":
+            return ("default.jpg", "mqdefault.jpg")
+        if tier == "mid":
+            return ("mqdefault.jpg", "hqdefault.jpg", "default.jpg")
+        return ("hqdefault.jpg", "mqdefault.jpg", "default.jpg")
+
+    @staticmethod
+    def max_side(tier: str) -> int:
+        if tier == "low":
+            return 48
+        if tier == "mid":
+            return 96
+        return DEFAULT_THUMB_MAX_SIDE
+
+    @staticmethod
+    def jpeg_quality(tier: str) -> int:
+        if tier == "low":
+            return 28
+        if tier == "mid":
+            return 50
+        return DEFAULT_JPEG_QUALITY
+
+
+async def _fetch_youtube_thumb_bytes(video_id: str, tier: str) -> Optional[tuple[bytes, str]]:
+    urls = tuple(f"https://i.ytimg.com/vi/{video_id}/{name}" for name in YoutubeThumbQuality.files(tier))
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as client:
+            for url in urls:
+                r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                if r.is_success and r.content:
+                    mime = r.headers.get("content-type") or "image/jpeg"
+                    if not mime.startswith("image/"):
+                        mime = "image/jpeg"
+                    return r.content, mime
+    except Exception:
+        return None
+    return None
+
+
 _cover_tile_cache_dir = _webapp_dir / "static" / "cover_tiles"
 # Small on-disk / on-the-wire JPEGs so the browser does not decode huge album art for tiny UI tiles.
 _COVER_THUMB_MAX_SIDE = DEFAULT_THUMB_MAX_SIDE
@@ -886,11 +919,12 @@ def _track_payload_row(t: Track, *, playback_quality: Optional[str] = None) -> d
     }
 
 
-def cover_tile_cache_path(playlist_id: str, track_id: str) -> Path:
+def cover_tile_cache_path(playlist_id: str, track_id: str, *, max_side: Optional[int] = None) -> Path:
     """On-disk cache: square JPEG, max edge _COVER_THUMB_MAX_SIDE (see module constants)."""
+    side = int(max_side or _COVER_THUMB_MAX_SIDE)
     safe_p = "".join(c if c.isalnum() or c in "-_" else "_" for c in playlist_id.strip())[:120]
     safe_t = "".join(c if c.isalnum() or c in "-_" else "_" for c in track_id.strip())[:120]
-    return _cover_tile_cache_dir / f"{safe_p}_{safe_t}_s{_COVER_THUMB_MAX_SIDE}.jpg"
+    return _cover_tile_cache_dir / f"{safe_p}_{safe_t}_s{side}.jpg"
 
 
 def _unlink_track_cover_caches(playlist_id: str, track_id: str) -> None:
@@ -1122,54 +1156,45 @@ async def api_playlist_view(request: Request, playlist_id: str):
 
 
 @app.get("/api/playlist/recommendations")
-async def api_playlist_recommendations(playlist_id: str, limit: int = 12):
-    """YouTube recommendations for a playlist (same hit shape as `/api/search/songs`)."""
+async def api_playlist_recommendations(
+    playlist_id: str,
+    background_tasks: BackgroundTasks,
+    limit: int = 12,
+    fresh: int = 0,
+):
+    """YouTube Mix from playlist seeds; same hit shape as `/api/search/songs`."""
     pl = service.get_playlist(playlist_id.strip())
     if not pl:
         raise HTTPException(status_code=404, detail="Playlist not found")
-    q = build_playlist_recommendation_query(pl)
-    if len(q) < 2:
-        q = ((pl.name or "music").strip() or "music") + " mix"
     lim = max(1, min(int(limit), 30))
-    extra = min(24, max(4, lim))
-    cache_key = f"{pl.id}|{lim}|{q}"
+    seed_ids = [t.resolved_youtube_video_id() for t in (pl.tracks or [])]
+    seed_key = ",".join(YoutubePlaylistMix().pick_seed_ids(seed_ids))
+    cache_key = f"{pl.id}|{lim}|rdmix1|{seed_key}"
 
     now = _now_ts()
     cached_hits: list[dict[str, Any]] | None = None
     async with _recommendation_cache_lock:
         _recommendation_cache_cleanup(now)
+        if fresh:
+            _recommendation_cache.pop(cache_key, None)
         cached = _recommendation_cache.get(cache_key)
         if cached is not None:
             cached_hits = cached[0]
 
     if cached_hits is None:
-        def _search() -> list[dict[str, Any]]:
-            return search_youtube_tracks(root, q, lim + extra)
+        def _load_hits() -> list[dict[str, Any]]:
+            return YoutubePlaylistMix(root).mix_for_seeds(seed_ids, lim)[:lim]
 
         loop = asyncio.get_event_loop()
-        cached_hits = await loop.run_in_executor(None, _search)
+        cached_hits = await loop.run_in_executor(None, _load_hits)
         async with _recommendation_cache_lock:
             _recommendation_cache[cache_key] = (cached_hits, now + _RECOMMENDATION_CACHE_TTL_SECONDS)
 
-    hits = cached_hits
-
-    existing_ids: set[str] = set()
-    for t in pl.tracks:
-        vid = t.youtube_video_id or youtube_video_id_from_url(t.url)
-        if vid:
-            existing_ids.add(vid)
-
-    out: list[dict[str, Any]] = []
-    for h in hits:
-        vid = h.get("video_id")
-        if isinstance(vid, str) and vid in existing_ids:
-            continue
-        out.append(dict(h))
-        if len(out) >= lim:
-            break
-
+    out = [dict(h) for h in (cached_hits or [])][:lim]
     await _annotate_search_stream_src(out)
     _annotate_library_matches(out)
+    prefetch_ids = [str(h.get("video_id") or "") for h in out]
+    background_tasks.add_task(_prefetch_mix_stream_payloads, prefetch_ids)
     return JSONResponse(out)
 
 
@@ -1293,36 +1318,23 @@ async def api_stream(request: Request, vid: str, fresh: int = 0):
     vid = vid.strip()
     if fresh:
         _preview_cache.pop(vid, None)
-    _keep_preview_cache_only(vid)
     return await YoutubeStreamProxy(vid).response_for(request)
 
 
 @app.get("/api/thumb")
-async def api_thumb(vid: str):
+async def api_thumb(vid: str, q: str = "high"):
     """Same-origin YouTube thumbnail so canvas color extraction is not tainted."""
     if not vid or not vid.replace("-", "").replace("_", "").isalnum():
         raise HTTPException(status_code=400, detail="Invalid video id")
     vid = vid.strip()
-    urls = (
-        f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
-        f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg",
-        f"https://i.ytimg.com/vi/{vid}/default.jpg",
-    )
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as client:
-            for url in urls:
-                r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
-                if r.is_success and r.content:
-                    mime = r.headers.get("content-type") or "image/jpeg"
-                    if not mime.startswith("image/"):
-                        mime = "image/jpeg"
-                    return Response(
-                        content=r.content,
-                        media_type=mime,
-                        headers={"Cache-Control": "public, max-age=86400"},
-                    )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Thumbnail unavailable") from exc
+    fetched = await _fetch_youtube_thumb_bytes(vid, YoutubeThumbQuality.parse(q))
+    if fetched:
+        raw, mime = fetched
+        return Response(
+            content=raw,
+            media_type=mime,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
     raise HTTPException(status_code=404, detail="Thumbnail not found")
 
 
@@ -1497,10 +1509,30 @@ async def edit_playlist(
 
 
 @app.get("/playlists/{playlist_id}/tracks/{track_id}/cover")
-async def track_cover(playlist_id: str, track_id: str):
+async def track_cover(playlist_id: str, track_id: str, q: str = "high"):
     pid = playlist_id.strip()
     tid = track_id.strip()
-    cpath = cover_tile_cache_path(pid, tid)
+    tier = YoutubeThumbQuality.parse(q)
+    max_side = YoutubeThumbQuality.max_side(tier)
+    jpeg_q = YoutubeThumbQuality.jpeg_quality(tier)
+    cpath = cover_tile_cache_path(pid, tid, max_side=max_side)
+
+    pl = service.get_playlist(pid)
+    track = pl.get_track(tid) if pl else None
+    yt_id = ""
+    if track:
+        yt_id = str(track.resolved_youtube_video_id() or "").strip()
+
+    if tier == "low" and yt_id:
+        fetched = await _fetch_youtube_thumb_bytes(yt_id, "low")
+        if fetched:
+            raw, mime = fetched
+            return Response(
+                content=raw,
+                media_type=mime,
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
+
     if cpath.is_file():
         return FileResponse(
             str(cpath),
@@ -1516,33 +1548,17 @@ async def track_cover(playlist_id: str, track_id: str):
     raw: Optional[bytes] = blob[0] if blob else None
     orig_mime = blob[1] if blob else "image/jpeg"
 
-    pl = service.get_playlist(pid)
-    track = pl.get_track(tid) if pl else None
-    yt_id: Optional[str] = None
-    if track:
-        yt_id = track.youtube_video_id or youtube_video_id_from_url(track.url)
     if raw is None and not yt_id and track:
         yt_id = await asyncio.to_thread(
             _youtube_video_id_from_track_metadata,
             track.artist,
             track.title,
-        )
+        ) or ""
+        yt_id = str(yt_id).strip()
     if raw is None and yt_id:
-        # Prefer small YouTube still; fall back to mqdefault if default is missing.
-        yt_urls = (
-            f"https://i.ytimg.com/vi/{yt_id}/default.jpg",
-            f"https://i.ytimg.com/vi/{yt_id}/mqdefault.jpg",
-        )
-        try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as client:
-                for url in yt_urls:
-                    r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
-                    if r.is_success and r.content:
-                        raw = r.content
-                        orig_mime = r.headers.get("content-type") or "image/jpeg"
-                        break
-        except Exception:
-            raw = None
+        fetched = await _fetch_youtube_thumb_bytes(yt_id, tier)
+        if fetched:
+            raw, orig_mime = fetched
 
     if not raw:
         raise HTTPException(status_code=404, detail="No embedded cover")
@@ -1550,8 +1566,8 @@ async def track_cover(playlist_id: str, track_id: str):
     processed = await asyncio.to_thread(
         square_thumb_jpeg,
         raw,
-        max_side=_COVER_THUMB_MAX_SIDE,
-        quality=_COVER_JPEG_QUALITY,
+        max_side=max_side,
+        quality=jpeg_q,
     )
     headers = {"Cache-Control": "public, max-age=604800"}
     if processed:

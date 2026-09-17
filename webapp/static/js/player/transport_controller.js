@@ -950,8 +950,15 @@ export class PlaylistTransportController {
         const plArt = (artworkPlaylistIdOpt != null && String(artworkPlaylistIdOpt).trim() !== '')
             ? String(artworkPlaylistIdOpt).trim()
             : String(hub.playingPlaylistId || hub.playlistId || '').trim();
-        const artworkUrl = track.id && plArt
-            ? baseUrl + '/playlists/' + encodeURIComponent(plArt) + '/tracks/' + encodeURIComponent(track.id) + '/cover'
+        const covers = window.SpolocalCoverUrls;
+        let artworkPath = '';
+        if (covers) {
+            artworkPath = covers.trackCoverUrl(plArt, track.id, track.youtube_video_id);
+        } else if (track.id && plArt) {
+            artworkPath = '/playlists/' + encodeURIComponent(plArt) + '/tracks/' + encodeURIComponent(track.id) + '/cover';
+        }
+        const artworkUrl = artworkPath
+            ? (artworkPath.indexOf('http') === 0 ? artworkPath : baseUrl + artworkPath)
             : '';
         try {
             navigator.mediaSession.metadata = new MediaMetadata({
@@ -1397,7 +1404,10 @@ export class PlaylistTransportController {
 
     async onPlaybackQualityChanged() {
         const hub = this.state.hub;
-        if (this.lyrics) this.lyrics.reload_stream_video_if_loaded();
+        if (this.lyrics) {
+            this.lyrics.reload_stream_video_if_loaded();
+            this.lyrics.loadCover(hub.currentTrackId, hub.playingPlaylistId || hub.playlistId);
+        }
         if (!hub.currentTrackId) return;
         const prefs = window.SpolocalQualityPrefs;
         const playback_q = prefs ? String(prefs.playbackKbps()) : '192';

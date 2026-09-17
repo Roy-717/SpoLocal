@@ -341,7 +341,7 @@ export class PlaylistQueueController {
         hub.queueList.innerHTML = '';
         let any = false;
 
-        const append_thumb_meta = (row, coverPid, trackId, title, artist, isCurrent) => {
+        const append_thumb_meta = (row, coverPid, trackId, title, artist, isCurrent, youtubeVid) => {
             if (isCurrent) {
                 row.classList.add('queue-row--current');
             }
@@ -352,7 +352,10 @@ export class PlaylistQueueController {
             qImg.alt = '';
             qImg.loading = 'lazy';
             qImg.decoding = 'async';
-            qImg.src = '/playlists/' + encodeURIComponent(coverPid) + '/tracks/' + encodeURIComponent(trackId) + '/cover';
+            const covers = window.SpolocalCoverUrls;
+            qImg.src = covers
+                ? covers.trackCoverUrl(coverPid, trackId, youtubeVid)
+                : ('/playlists/' + encodeURIComponent(coverPid) + '/tracks/' + encodeURIComponent(trackId) + '/cover');
             qImg.addEventListener('error', function () {
                 this.onerror = null;
                 this.style.opacity = '0';
@@ -382,7 +385,7 @@ export class PlaylistQueueController {
                 const row = document.createElement('button');
                 row.type = 'button';
                 row.className = 'queue-row w-full text-left';
-                append_thumb_meta(row, currentSourcePid, hub.currentTrackId, tloc.title, tloc.artist, true);
+                append_thumb_meta(row, currentSourcePid, hub.currentTrackId, tloc.title, tloc.artist, true, tloc.youtube_video_id);
                 row.addEventListener('click', () => {
                     if (this.transport) this.transport.playTrackById(hub.currentTrackId);
                 });
@@ -395,7 +398,7 @@ export class PlaylistQueueController {
                     const row = document.createElement('button');
                     row.type = 'button';
                     row.className = 'queue-row w-full text-left';
-                    append_thumb_meta(row, cpid, hub.currentTrackId, snap.title, snap.artist, true);
+                    append_thumb_meta(row, cpid, hub.currentTrackId, snap.title, snap.artist, true, snap.youtube_video_id);
                     row.addEventListener('click', () => {
                         if (hub.audio.paused) {
                             hub.audio.play().catch(err => { if (this.transport) this.transport.handlePlayError(err); });
@@ -413,7 +416,7 @@ export class PlaylistQueueController {
             const row = document.createElement('button');
             row.type = 'button';
             row.className = 'queue-row w-full text-left';
-            append_thumb_meta(row, entry.source_playlist_id, entry.track_id, entry.title, entry.artist, false);
+            append_thumb_meta(row, entry.source_playlist_id, entry.track_id, entry.title, entry.artist, false, entry.youtube_video_id);
             row.addEventListener('click', () => {
                 const before = hub.manual_up_next_queue.length;
                 while (hub.manual_up_next_queue.length && hub.manual_up_next_queue[0] !== entry) {
@@ -444,7 +447,7 @@ export class PlaylistQueueController {
             const row = document.createElement('button');
             row.type = 'button';
             row.className = 'queue-row w-full text-left';
-            append_thumb_meta(row, currentSourcePid, tid, t.title, t.artist, false);
+            append_thumb_meta(row, currentSourcePid, tid, t.title, t.artist, false, t.youtube_video_id);
             row.addEventListener('click', () => {
                 if (this.transport) this.transport.playTrackById(tid);
             });

@@ -59,6 +59,7 @@
 
     function setPlaybackKbps(kbps) {
         try { localStorage.setItem(LS_PLAYBACK_KBPS, String(snapKbps(kbps))); } catch (e) {}
+        try { window.dispatchEvent(new CustomEvent('spolocal:playback-quality-changed')); } catch (e) {}
     }
 
     function setDownloadKbps(kbps) {
@@ -157,6 +158,59 @@
         });
     }
 
+    class SpolocalCoverUrls {
+        qualityKey() {
+            const k = playbackKbps();
+            if (k <= 64) return 'low';
+            if (k <= 120) return 'mid';
+            return 'high';
+        }
+
+        youtubeThumbName() {
+            const key = this.qualityKey();
+            if (key === 'low') return 'default.jpg';
+            if (key === 'mid') return 'mqdefault.jpg';
+            return 'hqdefault.jpg';
+        }
+
+        youtubeThumbUrl(vid) {
+            const id = String(vid || '').trim();
+            if (!id) return '';
+            return 'https://i.ytimg.com/vi/' + encodeURIComponent(id) + '/' + this.youtubeThumbName();
+        }
+
+        youtubeThumbFallbackUrl(vid) {
+            const id = String(vid || '').trim();
+            if (!id) return '';
+            const name = this.youtubeThumbName() === 'default.jpg' ? 'mqdefault.jpg' : 'default.jpg';
+            return 'https://i.ytimg.com/vi/' + encodeURIComponent(id) + '/' + name;
+        }
+
+        youtubeThumbApiUrl(vid) {
+            const id = String(vid || '').trim();
+            if (!id) return '';
+            return '/api/thumb?vid=' + encodeURIComponent(id) + '&q=' + encodeURIComponent(this.qualityKey());
+        }
+
+        localCoverUrl(pid, tid) {
+            const p = String(pid || '').trim();
+            const t = String(tid || '').trim();
+            if (!p || !t) return '';
+            return '/playlists/' + encodeURIComponent(p) + '/tracks/' + encodeURIComponent(t)
+                + '/cover?q=' + encodeURIComponent(this.qualityKey());
+        }
+
+        trackCoverUrl(pid, tid, vid) {
+            const id = String(vid || '').trim();
+            if (playbackKbps() <= 64 && id) return this.youtubeThumbApiUrl(id);
+            const local = this.localCoverUrl(pid, tid);
+            if (local) return local;
+            if (id) return this.youtubeThumbApiUrl(id);
+            return '';
+        }
+    }
+
+    window.SpolocalCoverUrls = new SpolocalCoverUrls();
     window.SpolocalQualityPrefs = {
         QUALITY_TIERS,
         MIN_KBPS: 64,

@@ -110,15 +110,27 @@
         {% endif %}
 
 <style>
-        #playlist-table th {
+        #playlist-table th,
+        #playlist-recommendations-table th {
             position: static;
             user-select: none;
         }
     </style>
 
         <div id="playlist-recommendations-section" class="mt-12 pt-8 border-t border-[#282828]">
-            <h2 class="text-lg font-bold text-white mb-0.5">Recommended for you</h2>
-            <p class="text-xs text-[#727272] mb-4">Based on this playlist and your library tracks</p>
+            <div class="flex items-start justify-between gap-2 mb-4">
+                <div class="min-w-0">
+                    <h2 class="text-lg font-bold text-white mb-0.5">Recommended for you</h2>
+                    <p class="text-xs text-[#727272]">Mix from tracks on this playlist</p>
+                </div>
+                <button type="button"
+                        id="playlist-recommendations-refresh"
+                        class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#B3B3B3] hover:text-white hover:bg-[#282828]"
+                        title="Refresh recommendations"
+                        aria-label="Refresh recommendations">
+                    <i class="fa-solid fa-arrows-rotate text-sm" aria-hidden="true"></i>
+                </button>
+            </div>
             <p id="playlist-recommendations-msg" class="text-sm text-[#727272] hidden mb-4"></p>
             <div id="playlist-recommendations-grid" class="w-full min-h-[4rem]"></div>
         </div>

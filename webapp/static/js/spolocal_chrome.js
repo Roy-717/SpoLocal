@@ -1052,6 +1052,8 @@ document.addEventListener('click', function (e) {
     }
 
     let recs_fetch_gen = 0;
+    let recs_cache_pid = '';
+    let recs_cache_hits = [];
 
     function set_recs_refresh_busy(busy) {
         const btn = document.getElementById('playlist-recommendations-refresh');
@@ -1101,6 +1103,8 @@ document.addEventListener('click', function (e) {
                 return;
             }
             if (msg) msg.classList.add('hidden');
+            recs_cache_pid = String(pid);
+            recs_cache_hits = hits;
             render_playlist_recommendation_rows(grid, hits);
         } catch (e) {
             if (gen !== recs_fetch_gen) return;
@@ -1126,17 +1130,27 @@ document.addEventListener('click', function (e) {
         const grid = document.getElementById('playlist-recommendations-grid');
         const msg = document.getElementById('playlist-recommendations-msg');
         if (!section || !grid || !pid) return;
+        const refresh_btn = document.getElementById('playlist-recommendations-refresh');
+        if (refresh_btn) {
+            refresh_btn.onclick = function () {
+                recs_cache_pid = '';
+                recs_cache_hits = [];
+                disconnectPlaylistRecommendationsObserver();
+                void fetchPlaylistRecommendationsWhenVisible(pid, { fresh: true });
+            };
+        }
+        if (recs_cache_pid === String(pid) && recs_cache_hits.length) {
+            if (msg) {
+                msg.textContent = '';
+                msg.classList.add('hidden');
+            }
+            render_playlist_recommendation_rows(grid, recs_cache_hits);
+            return;
+        }
         grid.innerHTML = '';
         if (msg) {
             msg.textContent = '';
             msg.classList.add('hidden');
-        }
-        const refresh_btn = document.getElementById('playlist-recommendations-refresh');
-        if (refresh_btn) {
-            refresh_btn.onclick = function () {
-                disconnectPlaylistRecommendationsObserver();
-                void fetchPlaylistRecommendationsWhenVisible(pid, { fresh: true });
-            };
         }
         let layoutTries = 0;
         function attachObserver() {

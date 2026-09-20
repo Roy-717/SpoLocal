@@ -10,7 +10,13 @@ SpoLocal is a local Spotify downloader web app. Users search/download tracks by 
 
 ```
 webapp/
-├── main.py                  # FastAPI app, routes, API endpoints
+├── main.py                  # FastAPI app, routes, API endpoints (thin router)
+├── youtube_stream.py        # YouTubeStreamingService: CDN proxy, preview/video payloads, thumbnails
+├── media_server.py          # MediaServer: local /media range serving
+├── lyrics_service.py        # LyricsService: read/save/remote-fetch lyrics
+├── export_service.py        # ExportService: single-file and ZIP exports
+├── download_service.py      # DownloadService: library + downloads (queue/workers/hydration/persistence)
+├── loudness_analysis.py     # Loudness analysis for playback normalization
 ├── requirements.txt
 ├── templates/
 │   ├── index.html           # Main page: sidebar, search panel, player bar, lyrics panel, modals
@@ -22,7 +28,7 @@ webapp/
 │   ├── css/PlaylistPlayer.css # Custom player CSS (sliders, grid, sidebar drawers, vignettes)
 │   ├── js/
 │   │   ├── PlaylistSession.mjs  # Entry point
-│   │   ├── spolocal_chrome.js   # Global UI: search panel, preview, recommendations, add-to-playlist popover
+│   │   ├── app_shell.js         # AppShellController: global UI (search, preview, recommendations, popover)
 │   │   ├── playlist/session.js  # Session controller: initializes all sub-controllers, wires DOM refs
 │   │   ├── player/
 │   │   │   ├── lyrics_controller.js  # Lyrics: fetch, render, LRC sync, color extraction, toggle
@@ -88,7 +94,7 @@ Fixed overlay that opens above the player bar.
 3. `PlaylistLyricsController` — lyrics fetch/render/colors/LRC editor
 4. `PlaylistColumnResizer` — table column resize
 
-Global non-playlist UI (search, preview, recommendations) lives in `spolocal_chrome.js` — an IIFE.
+Global non-playlist UI (search, preview, recommendations) lives in `app_shell.js` as the `AppShellController` class (classic script, booted via `window.AppShell.boot()`).
 
 ## Key rules
 - Always ask before implementing

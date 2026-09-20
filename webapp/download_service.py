@@ -25,6 +25,7 @@ import yt_dlp
 from audio_quality import DEFAULT_KBPS, kbps_from_relpath, parse_quality_kbps, variant_key
 from lyrics_files import delete_lyrics_sidecars, materialize_lyrics_file_if_needed
 from lyrics_fetch import fetch_lrclib_sidecar_sync, on_demand_lyrics_fetch_enabled
+from lyrics_service import LyricsService
 from models import DownloadStatus, Playlist, Track, set_track_status_change_listener
 from tag_metadata import extract_album, extract_lyrics, read_audio_file_stats, write_track_tags
 
@@ -184,6 +185,7 @@ class DownloadService:
         self._lock = threading.Lock()
         # Embed downloader is plain HTTP — safe to use from any thread immediately.
         self._embed = SpotifyEmbedDownloader(root)
+        self.lyrics = LyricsService(self)
 
         self._startup_enqueue_done = False
         # track_id -> {title, artist, percent, speed, eta, phase}
@@ -666,70 +668,6 @@ class DownloadService:
             pass
         return None
 
-    @staticmethod
-    def export_filename_for_track(track: Track, audio_path: Path) -> str:
-        """Human-readable attachment name: Artist - Title.ext."""
-        artist = _sanitize_folder_name((track.artist or "").strip()) or "Unknown"
-        title = _sanitize_folder_name((track.title or "").strip()) or "Track"
-        stem = f"{artist} - {title}"
-        if len(stem) > 180:
-            stem = stem[:180].rstrip(". ")
-        suffix = audio_path.suffix.lower() or ".mp3"
-        return stem + suffix
-
-    def get_track_export(self, playlist_id: str, track_id: str) -> Optional[Tuple[Path, str]]:
-        """Audio path plus browser download filename, or None if missing."""
-        pl = self.get_playlist(playlist_id.strip())
-        if not pl:
-            return None
-        track = pl.get_track(track_id.strip())
-        if not track:
-            return None
-        path = self.get_track_audio_path(playlist_id, track_id)
-        if not path:
-            return None
-        return path, self.export_filename_for_track(track, path)
-
-    def build_playlist_export_zip(self, playlist_id: str) -> Optional[Tuple[Path, str, int]]:
-        """Zip downloaded tracks. Returns (temp_zip, zip_name, file_count) or None if playlist missing."""
-        pl = self.get_playlist(playlist_id.strip())
-        if not pl:
-            return None
-        self.hydrate_media_paths(pl, persist=False)
-        entries: List[Tuple[Path, str]] = []
-        used_names: Dict[str, int] = {}
-        for track in pl.tracks:
-            path = self.get_track_audio_path(pl.id, track.id)
-            if not path:
-                continue
-            name = self.export_filename_for_track(track, path)
-            key = name.lower()
-            n = used_names.get(key, 0)
-            used_names[key] = n + 1
-            if n:
-                stem = Path(name).stem
-                suffix = Path(name).suffix
-                name = f"{stem} ({n + 1}){suffix}"
-            entries.append((path, name))
-        if not entries:
-            return None
-        pl_name = _sanitize_folder_name(pl.name) or "playlist"
-        zip_name = f"{pl_name}.zip"
-        fd, tmp_name = tempfile.mkstemp(suffix=".zip", prefix="spolocal_export_")
-        os.close(fd)
-        tmp_path = Path(tmp_name)
-        try:
-            with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                for path, name in entries:
-                    zf.write(path, arcname=name)
-        except Exception:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise
-        return tmp_path, zip_name, len(entries)
-
     def _analyze_track_loudness(self, playlist_id: str, track: Track) -> None:
         if track.loudness_gain_db is not None:
             return
@@ -891,63 +829,6 @@ class DownloadService:
             "album": album_s,
         }
 
-    def get_lyrics_payload(self, playlist_id: str, track_id: str) -> dict:
-        from lyrics_files import read_sidecar_lyrics, read_raw_lrc, parse_lrc_lines
-
-        pl = self.get_playlist(playlist_id.strip())
-        tid = track_id.strip()
-        if not pl or not pl.get_track(tid):
-            return {"lyrics": "", "source": "none", "has_audio": False, "lrc_data": None, "lrc_raw": None}
-        path = self.get_track_audio_path(playlist_id, track_id)
-        if not path:
-            return {"lyrics": "", "source": "none", "has_audio": False, "lrc_data": None, "lrc_raw": None}
-        side = read_sidecar_lyrics(path)
-        if side:
-            result = {"lyrics": side[0], "source": side[1], "has_audio": True, "lrc_data": None, "lrc_raw": None}
-            # Include parsed LRC data and raw content for synced lyrics
-            if side[1] == "lrc":
-                raw_lrc = read_raw_lrc(path)
-                if raw_lrc:
-                    result["lrc_data"] = parse_lrc_lines(raw_lrc)
-                    result["lrc_raw"] = raw_lrc
-            return result
-        emb = extract_lyrics(path)
-        if emb and emb.strip():
-            return {"lyrics": emb.strip(), "source": "embedded", "has_audio": True, "lrc_data": None, "lrc_raw": None}
-        track = pl.get_track(tid)
-        if track and on_demand_lyrics_fetch_enabled():
-            plain, synced = fetch_lrclib_sidecar_sync(track.artist, track.title, force=True)
-            if (plain and plain.strip()) or (synced and synced.strip()):
-                materialize_lyrics_file_if_needed(path, None, plain, synced)
-                again = read_sidecar_lyrics(path)
-                if again:
-                    result = {"lyrics": again[0], "source": again[1], "has_audio": True, "lrc_data": None, "lrc_raw": None}
-                    if again[1] == "lrc":
-                        raw_lrc = read_raw_lrc(path)
-                        if raw_lrc:
-                            result["lrc_data"] = parse_lrc_lines(raw_lrc)
-                            result["lrc_raw"] = raw_lrc
-                    return result
-        return {"lyrics": "", "source": "none", "has_audio": True, "lrc_data": None, "lrc_raw": None}
-
-    def save_track_lyrics_file(self, playlist_id: str, track_id: str, text: str) -> bool:
-        from lyrics_files import save_user_lyrics
-
-        path = self.get_track_audio_path(playlist_id, track_id)
-        if not path:
-            return False
-        save_user_lyrics(path, text)
-        return True
-
-    def save_track_lrc_file(self, playlist_id: str, track_id: str, lines: list) -> bool:
-        from lyrics_files import save_lrc_from_lines
-
-        path = self.get_track_audio_path(playlist_id, track_id)
-        if not path:
-            return False
-        save_lrc_from_lines(path, lines)
-        return True
-
     def _resolve_variant_relpath(self, track: Track, quality: str) -> Optional[str]:
         """Find on-disk file for a quality variant (``__64k.mp3`` suffix + video id)."""
         qk = variant_key(parse_quality_kbps(quality))
@@ -1011,17 +892,6 @@ class DownloadService:
                 }
             )
         return rows
-
-    def _materialize_lyrics_after_download(self, track: Track) -> None:
-        if not track.media_relpath:
-            return
-        ap = (self.root / "downloads" / track.media_relpath).resolve()
-        if not ap.is_file():
-            return
-        remote_plain, remote_synced = fetch_lrclib_sidecar_sync(track.artist, track.title)
-        has_remote = (remote_plain and remote_plain.strip()) or (remote_synced and remote_synced.strip())
-        emb = extract_lyrics(ap) if not has_remote else None
-        materialize_lyrics_file_if_needed(ap, emb, remote_plain, remote_synced)
 
     def _preemptive_cover_tile_generation(self, pl_id: str, track_id: str) -> None:
         """Generate cover tile preemptively after download to avoid slow first request."""
@@ -1993,7 +1863,7 @@ class DownloadService:
                             track.set_media_variant(q, rel)
 
                 if self._track_has_resolved_file(track, q):
-                    self._materialize_lyrics_after_download(track)
+                    self.lyrics.materialize_after_download(track)
                     self._analyze_track_loudness(pl_id, track)
                     self._preemptive_cover_tile_generation(pl_id, track_id)
                     self._invalidate_hydration_cache(pl_id)

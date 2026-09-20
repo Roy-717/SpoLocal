@@ -223,7 +223,7 @@ export class PlaylistQueueController {
         hub.titleEl.textContent = e.title || '—';
         hub.subEl.textContent = e.artist || '—';
         if (this.transport) {
-            void this.transport.apply_track_loudness({
+            void this.transport.quality.apply_track_loudness({
                 id: e.track_id,
                 loudness_gain_db: e.loudness_gain_db,
             }, e.source_playlist_id);

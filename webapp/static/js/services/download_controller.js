@@ -374,7 +374,7 @@ export class PlaylistDownloadController {
                     } catch (homeErr) {}
                 }
                 if (this.session.transport) {
-                    this.session.transport.onPlaybackQualityChanged();
+                    this.session.transport.quality.onPlaybackQualityChanged();
                 }
             }
         } catch (e) {

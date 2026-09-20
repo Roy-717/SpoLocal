@@ -2,6 +2,7 @@ import { PlaylistTransportController } from '../player/transport_controller.js?v
 import { PlaylistLikeController } from '../player/like_controller.js?v=1';
 import { PlaylistShuffleController } from '../player/shuffle_controller.js?v=1';
 import { PlaylistMediaSessionController } from '../player/media_session_controller.js?v=1';
+import { PlaybackQualityController } from '../player/playback_quality_controller.js?v=1';
 import { PlaylistQueueController } from '../player/queue_controller.js?v=90';
 import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=90';
 import { PlaylistEditModalController } from '../ui/edit_modal_controller.js';
@@ -32,6 +33,7 @@ export class PlaylistSessionController {
         this.likes = new PlaylistLikeController(state);
         this.shuffle = new PlaylistShuffleController(state);
         this.mediaSession = new PlaylistMediaSessionController(state, this.transport);
+        this.quality = new PlaybackQualityController(state, this.transport);
         this.queue = new PlaylistQueueController(state, this.transport);
         this.lyrics = new PlaylistLyricsController(state, this.transport, this.queue);
         this.editModal = new PlaylistEditModalController(state);
@@ -45,7 +47,8 @@ export class PlaylistSessionController {
 
         // Wire cross-controller references so each controller can call its peers
         this.shuffle.setQueueRef(this.queue);
-        this.transport.setCrossRefs(this.queue, this.lyrics, this.home, this.likes, this.shuffle, this.mediaSession);
+        this.quality.setLyricsRef(this.lyrics);
+        this.transport.setCrossRefs(this.queue, this.lyrics, this.home, this.likes, this.shuffle, this.mediaSession, this.quality);
         this.queue.setCrossRefs(this.lyrics);
         this.editModal.setCrossRefs(this.contextMenu);
         this.settings.setCrossRefs(this.transport, this.download);
@@ -580,16 +583,16 @@ export class PlaylistSessionController {
         const playback_q = prefs ? String(prefs.playbackKbps()) : '192';
         let play_src = prefs ? prefs.resolvePlaybackPlaySrc(t, playback_q) : t.play_src;
         if (prefs && !prefs.hasVariant(t, playback_q)) {
-            const ready = await this.transport.ensurePlaybackVariantReady(t, pls, trs, playback_q, 0);
+            const ready = await this.transport.quality.ensurePlaybackVariantReady(t, pls, trs, playback_q, 0);
             if (ready) {
-                t = this.transport.findTrackInHub(trs) || t;
+                t = this.transport.quality.findTrackInHub(trs) || t;
                 play_src = prefs.resolvePlaybackPlaySrc(t, playback_q);
             }
         }
         if (!play_src) return;
 
         hub.audio.src = play_src;
-        void this.transport.apply_track_loudness(t, pls);
+        void this.transport.quality.apply_track_loudness(t, pls);
         hub.titleEl.textContent = t.title;
         hub.subEl.textContent = t.artist;
         if (this.lyrics) this.lyrics.loadCover(trs, pls);

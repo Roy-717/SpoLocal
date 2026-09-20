@@ -116,7 +116,7 @@ export class TrackEditController {
         const hub = this.state.hub;
         const tid = String(track_id);
         if (this.transport) {
-            this.transport.patchTrackInHub({ id: tid, title: title, artist: artist, album: album });
+            this.transport.quality.patchTrackInHub({ id: tid, title: title, artist: artist, album: album });
         }
         document.querySelectorAll('[data-track-id="' + CSS.escape(tid) + '"]').forEach((el) => {
             if (!el.classList || !el.classList.contains('track-row')) return;

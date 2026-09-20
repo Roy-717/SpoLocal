@@ -35,6 +35,7 @@ webapp/
 │   │   │   ├── like_controller.js       # PlaylistLikeController: like state + like buttons
 │   │   │   ├── shuffle_controller.js    # PlaylistShuffleController: shuffle/repeat + persisted order
 │   │   │   ├── media_session_controller.js # PlaylistMediaSessionController: Media Session API + progress
+│   │   │   ├── playback_quality_controller.js # PlaybackQualityController: quality variants, downloads, loudness
 │   │   │   ├── lyrics_colors.js        # LyricsColorExtractor: pure cover-art palette math
 │   │   │   ├── lyrics_controller.js  # Lyrics: fetch, render, LRC sync, toggle (uses LyricsColorExtractor)
 │   │   │   ├── song_mix_controller.js # Song mix SPA: YouTube Mix streams for one track
@@ -98,9 +99,10 @@ Fixed overlay that opens above the player bar.
 2. `PlaylistLikeController` — like state + like buttons (via `transport.likes`)
 3. `PlaylistShuffleController` — shuffle/repeat (via `transport.shuffle`)
 4. `PlaylistMediaSessionController` — Media Session API + progress (via `transport.mediaSession`)
-5. `PlaylistQueueController` — queue management
-6. `PlaylistLyricsController` — lyrics fetch/render/colors/LRC editor
-7. `PlaylistColumnResizer` — table column resize
+5. `PlaybackQualityController` — quality variants / downloads / loudness (via `transport.quality`)
+6. `PlaylistQueueController` — queue management
+7. `PlaylistLyricsController` — lyrics fetch/render/colors/LRC editor
+8. `PlaylistColumnResizer` — table column resize
 
 Global non-playlist UI (search, preview, recommendations) lives in `app_shell.js` as the `AppShellController` class (classic script, booted via `window.AppShell.boot()`).
 

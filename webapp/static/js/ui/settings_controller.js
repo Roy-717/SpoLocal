@@ -49,7 +49,7 @@ export class SettingsController {
                 (v) => prefs.setPlaybackKbps(v),
                 () => {
                     self._update_labels();
-                    if (self.transport) self.transport.onPlaybackQualityChanged();
+                    if (self.transport) self.transport.quality.onPlaybackQualityChanged();
                 },
             );
         }

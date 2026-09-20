@@ -233,14 +233,14 @@ export class PlaylistQueueController {
         hub.audio.play().catch(err => { if (this.transport) this.transport.handlePlayError(err); });
         if (hub.lyricsVisible && this.lyrics) this.lyrics.fetchLyrics(true);
         if (this.transport) {
-            this.transport.updateMediaSessionMetadata({
+            this.transport.mediaSession.updateMediaSessionMetadata({
                 id: e.track_id,
                 title: e.title,
                 artist: e.artist,
                 album: e.album,
             }, e.source_playlist_id);
         }
-        if (this.transport) this.transport.update_like_button_ui();
+        if (this.transport) this.transport.likes.update_like_button_ui();
         if (hub.queueVisible) this.render_queue_list();
     }
 
@@ -261,8 +261,8 @@ export class PlaylistQueueController {
 
         if (hub.shuffleOn) {
             if (this.transport) {
-                this.transport.syncShuffleOrderWithPlaylist();
-                if (!hub.shuffledOrder.length) this.transport.rebuildShuffledOrder();
+                this.transport.shuffle.syncShuffleOrderWithPlaylist();
+                if (!hub.shuffledOrder.length) this.transport.shuffle.rebuildShuffledOrder();
             }
             const ord = hub.shuffledOrder;
             const n = ord.length;
@@ -310,8 +310,8 @@ export class PlaylistQueueController {
             const shuffledOrderMatches = hub.shuffledOrder.length === playable.length
                 && hub.shuffledOrder.every(function (id) { return ids.has(id); });
             if (viewingPlaying && this.transport && !shuffledOrderMatches) {
-                this.transport.syncShuffleOrderWithPlaylist();
-                if (!hub.shuffledOrder.length) this.transport.rebuildShuffledOrder();
+                this.transport.shuffle.syncShuffleOrderWithPlaylist();
+                if (!hub.shuffledOrder.length) this.transport.shuffle.rebuildShuffledOrder();
             }
             const order = (shuffledOrderMatches || viewingPlaying)
                 ? hub.shuffledOrder.slice()

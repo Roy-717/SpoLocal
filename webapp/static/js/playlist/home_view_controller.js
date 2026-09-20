@@ -230,8 +230,8 @@ export class PlaylistHomeViewController {
             container.appendChild(row_el);
         });
 
-        if (this.transport && typeof this.transport.bind_track_row_like_buttons === 'function') {
-            this.transport.bind_track_row_like_buttons();
+        if (this.transport && typeof this.transport.likes.bind_track_row_like_buttons === 'function') {
+            this.transport.likes.bind_track_row_like_buttons();
         }
     }
 }

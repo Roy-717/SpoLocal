@@ -143,7 +143,7 @@ export class TrackEditController {
                 hub.lastPlayedTrackSnapshot.album = album;
             }
             if (this.transport) {
-                this.transport.updateMediaSessionMetadata({ id: tid, title: title, artist: artist });
+                this.transport.mediaSession.updateMediaSessionMetadata({ id: tid, title: title, artist: artist });
             }
         }
         if (Array.isArray(hub.manual_up_next_queue)) {

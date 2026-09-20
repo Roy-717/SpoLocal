@@ -1,6 +1,9 @@
-import { PlaylistTransportController } from '../player/transport_controller.js?v=100';
-import { PlaylistQueueController } from '../player/queue_controller.js?v=89';
-import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=89';
+import { PlaylistTransportController } from '../player/transport_controller.js?v=101';
+import { PlaylistLikeController } from '../player/like_controller.js?v=1';
+import { PlaylistShuffleController } from '../player/shuffle_controller.js?v=1';
+import { PlaylistMediaSessionController } from '../player/media_session_controller.js?v=1';
+import { PlaylistQueueController } from '../player/queue_controller.js?v=90';
+import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=90';
 import { PlaylistEditModalController } from '../ui/edit_modal_controller.js';
 import { PlaylistContextMenuController } from '../ui/context_menu_controller.js?v=93';
 import { PlaylistDownloadController } from '../services/download_controller.js?v=94';
@@ -26,6 +29,9 @@ export class PlaylistSessionController {
         this.state = state;
 
         this.transport = new PlaylistTransportController(state);
+        this.likes = new PlaylistLikeController(state);
+        this.shuffle = new PlaylistShuffleController(state);
+        this.mediaSession = new PlaylistMediaSessionController(state, this.transport);
         this.queue = new PlaylistQueueController(state, this.transport);
         this.lyrics = new PlaylistLyricsController(state, this.transport, this.queue);
         this.editModal = new PlaylistEditModalController(state);
@@ -38,7 +44,8 @@ export class PlaylistSessionController {
         this.songMix = new SongMixController(state);
 
         // Wire cross-controller references so each controller can call its peers
-        this.transport.setCrossRefs(this.queue, this.lyrics, this.home);
+        this.shuffle.setQueueRef(this.queue);
+        this.transport.setCrossRefs(this.queue, this.lyrics, this.home, this.likes, this.shuffle, this.mediaSession);
         this.queue.setCrossRefs(this.lyrics);
         this.editModal.setCrossRefs(this.contextMenu);
         this.settings.setCrossRefs(this.transport, this.download);
@@ -69,20 +76,20 @@ export class PlaylistSessionController {
         if (this.state.hub.isHomeView) {
             this.home.render();
         } else if (this.state.hub.playlistId) {
-            this.transport.bind_track_row_like_buttons();
+            this.transport.likes.bind_track_row_like_buttons();
         }
 
         this.restoreLastPlayback().then(async () => {
             this.queue.restore_manual_queue_from_storage();
-            this.transport.syncShuffleOrderWithPlaylist();
-            await this.transport.refresh_liked_keys_from_server();
-            this.transport.update_like_button_ui();
+            this.transport.shuffle.syncShuffleOrderWithPlaylist();
+            await this.transport.likes.refresh_liked_keys_from_server();
+            this.transport.likes.update_like_button_ui();
             if (this.state.hub.queueVisible) this.queue.render_queue_list();
         }).catch(async () => {
             this.queue.restore_manual_queue_from_storage();
-            this.transport.syncShuffleOrderWithPlaylist();
-            await this.transport.refresh_liked_keys_from_server();
-            this.transport.update_like_button_ui();
+            this.transport.shuffle.syncShuffleOrderWithPlaylist();
+            await this.transport.likes.refresh_liked_keys_from_server();
+            this.transport.likes.update_like_button_ui();
             if (this.state.hub.queueVisible) this.queue.render_queue_list();
         }).finally(() => {
             const u = new URLSearchParams(location.search);
@@ -126,13 +133,13 @@ export class PlaylistSessionController {
             this.navigatePlaylist(url.searchParams.get('playlist_id'), true);
         }, true);
 
-        window.addEventListener('beforeunload', () => this.transport.persistPlaybackProgress());
+        window.addEventListener('beforeunload', () => this.transport.mediaSession.persistPlaybackProgress());
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
-                this.transport.persistPlaybackProgress();
+                this.transport.mediaSession.persistPlaybackProgress();
             } else {
                 if (this.state.hub.currentTrackId && !this.state.hub.audio.paused) {
-                    this.transport.updateMediaSessionPlaybackState();
+                    this.transport.mediaSession.updateMediaSessionPlaybackState();
                 }
             }
         });
@@ -416,7 +423,7 @@ export class PlaylistSessionController {
 
         this.transport.updatePlayingRow();
         this.transport.setPlayUi(!!(hub.currentTrackId && !hub.audio.paused));
-        this.transport.bind_track_row_like_buttons();
+        this.transport.likes.bind_track_row_like_buttons();
 
         if (hub.queueVisible) this.queue.render_queue_list();
 
@@ -433,9 +440,9 @@ export class PlaylistSessionController {
             requestAnimationFrame(() => requestAnimationFrame(restore_scroll));
         }
 
-        void this.transport.refresh_liked_keys_from_server().then(() => {
-            this.transport.update_like_button_ui();
-            this.transport.update_track_row_like_buttons();
+        void this.transport.likes.refresh_liked_keys_from_server().then(() => {
+            this.transport.likes.update_like_button_ui();
+            this.transport.likes.update_track_row_like_buttons();
             if (hub.queueVisible) this.queue.render_queue_list();
         });
     }
@@ -588,7 +595,7 @@ export class PlaylistSessionController {
         if (this.lyrics) this.lyrics.loadCover(trs, pls);
         this.transport.updatePlayingRow();
         this.transport.setPlayUi(false);
-        this.transport.update_like_button_ui();
+        this.transport.likes.update_like_button_ui();
 
         const onMeta = () => {
             hub.audio.removeEventListener('loadedmetadata', onMeta);

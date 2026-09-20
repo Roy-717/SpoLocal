@@ -31,7 +31,12 @@ webapp/
 │   │   ├── app_shell.js         # AppShellController: global UI (search, preview, recommendations, popover)
 │   │   ├── playlist/session.js  # Session controller: initializes all sub-controllers, wires DOM refs
 │   │   ├── player/
-│   │   │   ├── lyrics_controller.js  # Lyrics: fetch, render, LRC sync, color extraction, toggle
+│   │   │   ├── transport_controller.js # Core playback: play/pause/seek/next/prev, quality, streaming
+│   │   │   ├── like_controller.js       # PlaylistLikeController: like state + like buttons
+│   │   │   ├── shuffle_controller.js    # PlaylistShuffleController: shuffle/repeat + persisted order
+│   │   │   ├── media_session_controller.js # PlaylistMediaSessionController: Media Session API + progress
+│   │   │   ├── lyrics_colors.js        # LyricsColorExtractor: pure cover-art palette math
+│   │   │   ├── lyrics_controller.js  # Lyrics: fetch, render, LRC sync, toggle (uses LyricsColorExtractor)
 │   │   │   ├── song_mix_controller.js # Song mix SPA: YouTube Mix streams for one track
 │   │   │   ├── queue_controller.js     # Queue: add/remove/reorder/manage queue sidebar
 │   │   │   └── player_state.js        # Shared state hub
@@ -89,10 +94,13 @@ Fixed overlay that opens above the player bar.
 ## JS architecture
 
 `PlaylistSession.mjs` → `PlaylistSessionController` (session.js) → initializes sub-controllers:
-1. `PlaylistTransportController` — playback, seek, volume, like
-2. `PlaylistQueueController` — queue management
-3. `PlaylistLyricsController` — lyrics fetch/render/colors/LRC editor
-4. `PlaylistColumnResizer` — table column resize
+1. `PlaylistTransportController` — playback, seek, volume, quality (delegates likes/shuffle/media-session)
+2. `PlaylistLikeController` — like state + like buttons (via `transport.likes`)
+3. `PlaylistShuffleController` — shuffle/repeat (via `transport.shuffle`)
+4. `PlaylistMediaSessionController` — Media Session API + progress (via `transport.mediaSession`)
+5. `PlaylistQueueController` — queue management
+6. `PlaylistLyricsController` — lyrics fetch/render/colors/LRC editor
+7. `PlaylistColumnResizer` — table column resize
 
 Global non-playlist UI (search, preview, recommendations) lives in `app_shell.js` as the `AppShellController` class (classic script, booted via `window.AppShell.boot()`).
 

@@ -25,6 +25,20 @@ def _sanitize_folder_name(name: str) -> str:
     return s or "playlist"
 
 
+def _flac_picture_block(data: bytes, mime: str = "image/jpeg") -> str:
+    """Base64 FLAC picture block, the cover format Ogg Opus tags use."""
+    import base64
+
+    from mutagen.flac import Picture
+
+    pic = Picture()
+    pic.type = 3
+    pic.mime = mime
+    pic.desc = "Cover"
+    pic.data = data
+    return base64.b64encode(pic.write()).decode("ascii")
+
+
 def _env_truthy(name: str, *, default: bool) -> bool:
     raw = os.environ.get(name, "").strip().lower()
     if raw == "":
@@ -74,10 +88,10 @@ def youtube_video_id_from_ytdlp_info(info: object) -> str | None:
 def _existing_file(path: Path) -> Path | None:
     if path.is_file():
         return path
-    if path.suffix.lower() != ".mp3":
-        mp3 = path.with_suffix(".mp3")
-        if mp3.is_file():
-            return mp3
+    for ext in (".opus", ".mp3", ".m4a"):
+        alt = path.with_suffix(ext)
+        if alt.is_file():
+            return alt
     return None
 
 
@@ -112,14 +126,18 @@ def _filepath_from_ytdlp_info(info: object) -> Path | None:
     return None
 
 
-def _mp3_for_video_id(root: Path, video_id: str, quality_key: str) -> Path | None:
-    """Only the file for this video id + kbps, never an unrelated newest mp3."""
+def _audio_for_video_id(root: Path, video_id: str, quality_key: str) -> Path | None:
+    """Only the file for this video id + kbps, never an unrelated newest file."""
     if not root.is_dir() or not video_id:
         return None
     needle = f"[{video_id}]"
     suffix = f"__{quality_key}k"
     matches: list[Path] = []
-    for p in root.rglob("*.mp3"):
+    for p in root.rglob("*"):
+        if not p.is_file():
+            continue
+        if p.suffix.lower() not in (".opus", ".mp3", ".m4a", ".webm"):
+            continue
         if needle not in p.name:
             continue
         if suffix not in p.stem:
@@ -204,7 +222,7 @@ class YtDlpAudioDownloader:
             vid = youtube_video_id_from_ytdlp_info(info)
             out_path = _filepath_from_ytdlp_info(info)
             if out_path is None and vid:
-                out_path = _mp3_for_video_id(self._youtube_dir, vid, qk)
+                out_path = _audio_for_video_id(self._youtube_dir, vid, qk)
             return (vid, out_path)
         except Exception:
             try:
@@ -213,7 +231,7 @@ class YtDlpAudioDownloader:
                 vid = youtube_video_id_from_ytdlp_info(info)
                 out_path = _filepath_from_ytdlp_info(info)
                 if out_path is None and vid:
-                    out_path = _mp3_for_video_id(self._youtube_dir, vid, qk)
+                    out_path = _audio_for_video_id(self._youtube_dir, vid, qk)
                 return (vid, out_path)
             except Exception:
                 return (None, None)
@@ -453,7 +471,7 @@ class SpotifyEmbedDownloader:
         safe = sanitize_filename(f"{artist} - {title}", restricted=False)
         stem = quality_file_stem(safe, kbps)
         outtmpl = str(out_dir / f"{stem}.%(ext)s")
-        expected = out_dir / f"{stem}.mp3"
+        expected = out_dir / f"{stem}.opus"
 
         for provider in ("ytsearch1", "ytmsearch1"):
             query = f"{provider}:{artist} - {title}"
@@ -497,9 +515,30 @@ class SpotifyEmbedDownloader:
 
     def _tag_file(self, path: Path, artist: str, title: str, cover_url: str | None) -> None:
         try:
+            import urllib.request
+
+            cover_data: bytes | None = None
+            if cover_url:
+                try:
+                    req = urllib.request.Request(cover_url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        cover_data = resp.read()
+                except Exception:
+                    cover_data = None
+
+            if path.suffix.lower() == ".opus":
+                from mutagen.oggopus import OggOpus
+
+                audio = OggOpus(str(path))
+                audio["title"] = [title]
+                audio["artist"] = [artist]
+                if cover_data:
+                    audio["metadata_block_picture"] = [_flac_picture_block(cover_data)]
+                audio.save()
+                return
+
             from mutagen.id3 import ID3, TIT2, TPE1, APIC
             from mutagen.mp3 import MP3
-            import urllib.request
 
             audio = MP3(str(path), ID3=ID3)
             try:
@@ -510,16 +549,10 @@ class SpotifyEmbedDownloader:
             audio.tags["TIT2"] = TIT2(encoding=3, text=title)
             audio.tags["TPE1"] = TPE1(encoding=3, text=artist)
 
-            if cover_url:
-                try:
-                    req = urllib.request.Request(cover_url, headers={"User-Agent": "Mozilla/5.0"})
-                    with urllib.request.urlopen(req, timeout=10) as resp:
-                        cover_data = resp.read()
-                    audio.tags["APIC"] = APIC(
-                        encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover_data
-                    )
-                except Exception:
-                    pass
+            if cover_data:
+                audio.tags["APIC"] = APIC(
+                    encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover_data
+                )
 
             audio.save()
         except Exception as exc:

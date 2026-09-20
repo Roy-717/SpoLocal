@@ -1,4 +1,8 @@
-"""Audio quality (MP3 kbps) for downloads and playback."""
+"""Audio quality tiers for downloads and playback.
+
+Both tiers are Opus passthrough: YouTube already serves Opus, so yt-dlp only
+remuxes the container (``-c:a copy``) instead of re-encoding to MP3.
+"""
 from __future__ import annotations
 
 import re
@@ -6,9 +10,11 @@ import shutil
 from typing import Any, Optional
 
 QUALITY_LOW_KBPS = 64
-QUALITY_MID_KBPS = 120
 QUALITY_HIGH_KBPS = 192
-QUALITY_TIERS = (QUALITY_LOW_KBPS, QUALITY_MID_KBPS, QUALITY_HIGH_KBPS)
+# Retired middle tier. Older downloads may still exist at 120 kbps; it is
+# never selected anymore but stays parseable so those files keep working.
+QUALITY_MID_KBPS = 120
+QUALITY_TIERS = (QUALITY_LOW_KBPS, QUALITY_HIGH_KBPS)
 
 MIN_KBPS = QUALITY_LOW_KBPS
 MAX_KBPS = QUALITY_HIGH_KBPS
@@ -16,8 +22,8 @@ DEFAULT_KBPS = QUALITY_HIGH_KBPS
 
 _LEGACY_MAP = {
     "low": QUALITY_LOW_KBPS,
-    "mid": QUALITY_MID_KBPS,
-    "medium": QUALITY_MID_KBPS,
+    "mid": QUALITY_HIGH_KBPS,
+    "medium": QUALITY_HIGH_KBPS,
     "high": QUALITY_HIGH_KBPS,
 }
 
@@ -44,18 +50,33 @@ def parse_quality_kbps(raw: str | int | None, *, default: int = DEFAULT_KBPS) ->
     if text.endswith("k"):
         text = text[:-1]
     try:
-        return snap_kbps(int(float(text)))
+        n = int(float(text))
     except ValueError:
         return snap_kbps(default)
+    if n == QUALITY_MID_KBPS:
+        return QUALITY_HIGH_KBPS
+    return snap_kbps(n)
 
 
 def variant_key(kbps: int) -> str:
     return str(snap_kbps(kbps))
 
 
-def ytdlp_audio_format() -> str:
-    """Audio-only DASH. Never fall back to muxed video (often ~44 kbps AAC)."""
+def ytdlp_audio_format(kbps: int | None = None) -> str:
+    """Audio-only DASH. Never fall back to muxed video (often ~44 kbps AAC).
+
+    YouTube serves two Opus tiers: ~50 kbps (itag 249) and ~130 kbps (itag 251).
+    Data Saver takes the low one, Highest the medium one.
+    """
+    if kbps is not None and snap_kbps(kbps) <= QUALITY_LOW_KBPS:
+        return (
+            "bestaudio[acodec^=opus][abr<=80]/"
+            "bestaudio[abr<=80]/"
+            "bestaudio[acodec^=opus]/"
+            "bestaudio"
+        )
     return (
+        "bestaudio[acodec^=opus][abr>=96]/"
         "bestaudio[acodec^=opus]/"
         "bestaudio[acodec^=mp4a]/"
         "bestaudio[abr>=96]/"
@@ -63,21 +84,19 @@ def ytdlp_audio_format() -> str:
     )
 
 
-def ytdlp_audio_postprocessor(kbps: int) -> dict:
-    q = snap_kbps(kbps)
+def ytdlp_audio_postprocessor() -> dict:
+    """Remux to Ogg Opus. yt-dlp copies the stream when the source is already Opus."""
     return {
         "key": "FFmpegExtractAudio",
-        "preferredcodec": "mp3",
-        "preferredquality": q,
+        "preferredcodec": "opus",
     }
 
 
 def ytdlp_extract_audio_opts(kbps: int) -> dict[str, Any]:
     q = snap_kbps(kbps)
     return {
-        "format": ytdlp_audio_format(),
-        "postprocessors": [ytdlp_audio_postprocessor(q)],
-        "postprocessor_args": {"FFmpegExtractAudio": ["-b:a", f"{q}k"]},
+        "format": ytdlp_audio_format(q),
+        "postprocessors": [ytdlp_audio_postprocessor()],
     }
 
 
@@ -89,7 +108,7 @@ _RE_KBPS_SUFFIX = re.compile(r"__(\d+)k\.(?:mp3|m4a|opus)$", re.I)
 
 
 def kbps_from_relpath(relpath: str | None) -> int | None:
-    """Parse ``__64k.mp3`` suffix from a media path, if present."""
+    """Parse ``__64k.opus`` suffix from a media path, if present."""
     if not relpath:
         return None
     m = _RE_KBPS_SUFFIX.search(relpath.replace("\\", "/"))

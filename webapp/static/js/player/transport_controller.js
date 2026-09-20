@@ -457,14 +457,16 @@ export class PlaylistTransportController {
         hub.subEl.textContent = t.artist || '—';
 
         if (prefs && !prefs.hasVariant(t, playback_q)) {
-            const ready = await this.ensurePlaybackVariantReady(t, playlistId, trackId, playback_q, playGen);
+            const ready = await this.ensurePlaybackVariantReady(t, playlistId, trackId, playback_q, playGen, prefs.streamFitsTier(playback_q));
             if (playGen !== this._playGeneration) return;
             const row = await this.fetchTrackPayload(playlistId, trackId);
             if (row) {
                 this.patchTrackInHub(row);
                 t = Object.assign({}, t, row, { id: trackId });
             }
-            if (!ready && !prefs.hasVariant(t, playback_q) && !prefs.streamPlaySrc(t)) return;
+            // Not ready and nothing to play at this tier: stop rather than quietly
+            // falling back to the stream, which is best-quality audio.
+            if (!ready && !prefs.hasVariant(t, playback_q) && !prefs.streamFitsTier(playback_q)) return;
         }
 
         const playSrc = prefs
@@ -1626,7 +1628,7 @@ export class PlaylistTransportController {
         this.updatePlayingRow();
 
         if (prefs && !prefs.hasVariant(t, playback_q) && sourcePid) {
-            const ready = await this.ensurePlaybackVariantReady(t, sourcePid, trackId, playback_q, playGen);
+            const ready = await this.ensurePlaybackVariantReady(t, sourcePid, trackId, playback_q, playGen, prefs.streamFitsTier(playback_q));
             if (playGen !== this._playGeneration) return;
             if (!ready) return;
             t = this.findTrackInHub(trackId) || t;
@@ -1741,11 +1743,47 @@ export class PlaylistTransportController {
                     if (db != null) {
                         track.loudness_gain_db = db;
                         this.patchTrackInHub({ id: tid, loudness_gain_db: db });
+                    } else if (j.pending) {
+                        this.poll_track_loudness(pid, tid, track, norm);
                     }
                 }
             } catch (e) {}
+            // Out-of-order guard: only apply if this track is still the one playing.
+            if (!(hub.currentTrackId === tid)) return;
         }
         norm.set_track_gain_db(db != null ? db : 0);
+    }
+
+    isCurrentTrackFor(tid) {
+        const hub = this.state.hub;
+        return !!(hub && hub.currentTrackId === tid);
+    }
+
+    async poll_track_loudness(pid, tid, track, norm) {
+        // Background analysis takes a few seconds; pick up the cached gain once ready.
+        let attempts = 0;
+        while (attempts < 10 && this.isCurrentTrackFor(tid)) {
+            await new Promise((res) => setTimeout(res, 2000));
+            try {
+                const r = await fetch(
+                    '/api/playlists/' + encodeURIComponent(pid) + '/tracks/' + encodeURIComponent(tid) + '/loudness-gain',
+                    { credentials: 'same-origin' },
+                );
+                if (!r.ok) return;
+                const j = await r.json();
+                if (j.loudness_gain_db != null) {
+                    track.loudness_gain_db = j.loudness_gain_db;
+                    this.patchTrackInHub({ id: tid, loudness_gain_db: j.loudness_gain_db });
+                    if (this.isCurrentTrackFor(tid)) {
+                        norm.set_track_gain_db(j.loudness_gain_db);
+                    }
+                    return;
+                }
+            } catch (e) {
+                return;
+            }
+            attempts += 1;
+        }
     }
 
     handleAudioElementError(event) {

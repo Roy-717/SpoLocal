@@ -1451,4 +1451,11 @@ document.addEventListener('click', function (e) {
             window.applyQualityAwareCovers(document);
         }
     });
+
+    // Initial load: the recs block is server-rendered, but only applySpaPlaylist()
+    // wires it up. Attach the observer here too. It still fetches only once the
+    // section is scrolled into view (no eager load).
+    if (typeof window.__spaPlaylistId === 'string' && window.__spaPlaylistId) {
+        loadPlaylistRecommendations(window.__spaPlaylistId);
+    }
 })();

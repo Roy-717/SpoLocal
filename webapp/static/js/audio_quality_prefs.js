@@ -1,16 +1,19 @@
 /**
- * Playback / download quality: Low (64), Medium (120), High (192) kbps.
+ * Playback / download quality: Data Saver or Highest (both Opus passthrough).
  */
 (function () {
-    const QUALITY_TIERS = [64, 120, 192];
+    const QUALITY_TIERS = [64, 192];
     const DEFAULT_KBPS = 192;
     const LS_PLAYBACK_KBPS = 'spolocal_playback_kbps';
     const LS_DOWNLOAD_KBPS = 'spolocal_download_kbps';
-    const LEGACY = { low: 64, mid: 120, medium: 120, high: 192 };
+    // 120 was the old Medium tier. Its files may still exist, so it maps to
+    // Highest rather than snapping to the nearer 64.
+    const LEGACY = { low: 64, mid: 192, medium: 192, high: 192 };
 
     function snapKbps(n) {
         const v = parseInt(n, 10);
         if (!isFinite(v)) return DEFAULT_KBPS;
+        if (v === 120) return 192;
         let best = QUALITY_TIERS[0];
         let best_dist = Math.abs(v - best);
         for (let i = 1; i < QUALITY_TIERS.length; i++) {
@@ -108,6 +111,7 @@
         if (exact) return exact;
         if (!track) return '';
         const variants = track.play_variants || {};
+        // `120` stays in the order so files downloaded under the retired Medium tier still play.
         const order = ['192', '120', '64', 'high', 'mid', 'medium', 'low'];
         for (let i = 0; i < order.length; i++) {
             const k = order[i];
@@ -129,10 +133,14 @@
     }
 
     function formatLabel(kbps) {
-        const k = snapKbps(kbps);
-        if (k <= 64) return 'Low (64 kbps)';
-        if (k <= 120) return 'Medium (120 kbps)';
-        return 'High (192 kbps)';
+        return snapKbps(kbps) <= 64 ? 'Data Saver' : 'Highest';
+    }
+
+    // The YouTube stream serves its best audio (~130 kbps), i.e. the Highest tier.
+    // It may only stand in for Highest; for Data Saver, wait for the real file
+    // instead of quietly playing something better than the user asked for.
+    function streamFitsTier(kbps) {
+        return snapKbps(kbps) >= MAX_KBPS;
     }
 
     function syncTierGroup(container, kbps) {
@@ -160,10 +168,7 @@
 
     class SpolocalCoverUrls {
         qualityKey() {
-            const k = playbackKbps();
-            if (k <= 64) return 'low';
-            if (k <= 120) return 'mid';
-            return 'high';
+            return playbackKbps() <= 64 ? 'low' : 'high';
         }
 
         youtubeThumbName() {
@@ -229,6 +234,7 @@
         normalizeMediaPath,
         hasVariant,
         formatLabel,
+        streamFitsTier,
         syncTierGroup,
         bindTierGroup,
         playbackQuality: playbackKbps,

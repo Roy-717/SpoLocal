@@ -42,6 +42,9 @@ from spotify_scraper import (
 _HYDRATION_CACHE_TTL_SECONDS = 30  # Cache hydration results for 30 seconds
 _HYDRATION_CACHE_MAX_ENTRIES = 100
 
+# Audio file extensions SpoLocal can produce or still find on disk.
+AUDIO_EXTS = (".opus", ".mp3", ".m4a", ".flac")
+
 
 def _now_ts() -> float:
     return time.time()
@@ -190,6 +193,11 @@ class DownloadService:
         self._error_rows_cache: Optional[List[dict]] = None
         self._save_timer: Optional[threading.Timer] = None
         self._save_timer_lock = threading.Lock()
+        # (playlist_id, track_id) rows currently being rebuilt at both tiers.
+        # Once both variants exist, every other format for that track is deleted.
+        self._rebuild_pending: set[Tuple[str, str]] = set()
+        # (playlist_id, track_id) loudness analyses in flight - avoid duplicate concurrent runs.
+        self._loudness_analyzing: set[Tuple[str, str]] = set()
 
         # Hydration cache: playlist_id -> _HydrationCacheEntry
         self._hydration_cache: Dict[str, _HydrationCacheEntry] = {}
@@ -442,7 +450,9 @@ class DownloadService:
                 continue
             if path.name in existing_names:
                 continue
-            audio_files = sorted(path.glob("*.mp3")) + sorted(path.glob("*.m4a"))
+            audio_files = sorted(
+                p for p in path.iterdir() if p.is_file() and p.suffix.lower() in AUDIO_EXTS
+            )
             if not audio_files:
                 continue
             pl = Playlist.create(path.name)
@@ -723,16 +733,23 @@ class DownloadService:
     def _analyze_track_loudness(self, playlist_id: str, track: Track) -> None:
         if track.loudness_gain_db is not None:
             return
-        path = self.get_track_audio_path(playlist_id, track.id)
-        if not path:
+        key = (playlist_id, track.id)
+        if key in self._loudness_analyzing:
             return
+        self._loudness_analyzing.add(key)
         try:
-            from loudness_analysis import analyze_loudness_gain_db
-            gain = analyze_loudness_gain_db(path, self.root)
-        except Exception:
-            return
-        if gain is not None:
-            track.loudness_gain_db = gain
+            path = self.get_track_audio_path(playlist_id, track.id)
+            if not path:
+                return
+            try:
+                from loudness_analysis import analyze_loudness_gain_db
+                gain = analyze_loudness_gain_db(path, self.root)
+            except Exception:
+                gain = None
+            if gain is not None:
+                track.loudness_gain_db = gain
+        finally:
+            self._loudness_analyzing.discard(key)
 
     def ensure_track_loudness_gain(self, playlist_id: str, track_id: str) -> Optional[float]:
         pl = self.get_playlist(playlist_id.strip())
@@ -942,7 +959,9 @@ class DownloadService:
             return None
         suffix = f"__{qk}k"
         candidates: List[Path] = []
-        for path in ytdir.rglob("*.mp3"):
+        for path in ytdir.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in AUDIO_EXTS:
+                continue
             if suffix not in path.stem:
                 continue
             if f"[{vid}]" not in path.name:
@@ -1137,6 +1156,136 @@ class DownloadService:
                 )
         return rows
 
+    def reload_library_all_qualities(self) -> dict:
+        """Re-download every track at both quality tiers and drop every other format.
+
+        Non-destructive per track: the old files are only deleted once both new
+        qualities are on disk, so a failed re-download never loses audio.
+        Returns a summary of what was queued and skipped.
+        """
+        queued_tracks = 0
+        skipped = 0
+        for pl in self.playlists.values():
+            if self.is_liked_songs_playlist(pl.id):
+                continue
+            for t in list(pl.tracks):
+                if not self._track_can_queue_quality_download(t):
+                    skipped += 1
+                    continue
+                with self._lock:
+                    self._rebuild_pending.add((pl.id, t.id))
+                for q in ("64", "192"):
+                    self.start_track_download(pl.id, t.id, force_redownload=True, quality=q)
+                queued_tracks += 1
+        return {"queued": queued_tracks, "skipped": skipped, "qualities": ["64", "192"]}
+
+    def _rebuild_cleanup(self, playlist_id: str, track_id: str) -> None:
+        """Delete every non-canonical audio file for one rebuilt track."""
+        key = (playlist_id, track_id)
+        with self._lock:
+            if key not in self._rebuild_pending:
+                return
+        pl = self.get_playlist(playlist_id)
+        track = pl.get_track(track_id) if pl else None
+        if not track:
+            with self._lock:
+                self._rebuild_pending.discard(key)
+            return
+        # Wait until both tiers are really on disk.
+        if not self._track_has_resolved_file(track, "64") or not self._track_has_resolved_file(track, "192"):
+            return
+
+        with self._lock:
+            if key not in self._rebuild_pending:
+                return
+            self._rebuild_pending.discard(key)
+
+        variants = dict(track.media_variants or {})
+        keep: set[Path] = set()
+        for q in ("64", "192"):
+            rel = variants.get(q)
+            if not rel:
+                continue
+            try:
+                keep.add((self.root / "downloads" / rel).resolve())
+            except OSError:
+                continue
+        legacy = self._legacy_files_for_track(track, keep)
+        all_media = list(variants.values()) + [track.media_relpath] + legacy
+        canonical: Dict[str, str] = {}
+        seen: set[Path] = set()
+        for rel in all_media:
+            if not rel:
+                continue
+            try:
+                path = (self.root / "downloads" / rel).resolve()
+            except OSError:
+                continue
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            if path in keep:
+                continue
+            try:
+                delete_lyrics_sidecars(path)
+                path.unlink()
+            except OSError:
+                continue
+
+        # Prune JSON references to files that no longer exist.
+        for q, rel in list((track.media_variants or {}).items()):
+            try:
+                p = (self.root / "downloads" / rel).resolve() if rel else None
+            except OSError:
+                p = None
+            if (not p) or (not p.is_file()):
+                track.media_variants.pop(q, None)
+            elif variant_key(q) in ("64", "192"):
+                canonical[variant_key(q)] = rel
+        track.media_variants = canonical
+        track.media_relpath = canonical.get(variant_key(DEFAULT_KBPS)) or next(iter(canonical.values()), None)
+
+        self._drop_cover_tiles(pl.id, track.id)
+        self._save_playlists(immediate=False)
+
+    def _legacy_files_for_track(self, track: Track, keep: set[Path]) -> List[str]:
+        """Relative paths of same-video files whose suffix is not 64/192."""
+        vid = self._youtube_video_id_for_track(track)
+        if not vid:
+            return []
+        downloads_root = (self.root / "downloads").resolve()
+        found: List[str] = []
+        for path in (self.root / "downloads").rglob("*"):
+            if not path.is_file():
+                continue
+            if f"[{vid}]" not in path.name:
+                continue
+            try:
+                rp = path.resolve()
+            except OSError:
+                continue
+            if rp in keep:
+                continue
+            if rp.suffix.lower() not in AUDIO_EXTS:
+                continue
+            try:
+                found.append(rp.relative_to(downloads_root).as_posix())
+            except ValueError:
+                continue
+        return found
+
+    def _drop_cover_tiles(self, playlist_id: str, track_id: str) -> None:
+        cpath = self.root / "webapp" / "static" / "cover_tiles"
+        if not cpath.is_dir():
+            return
+        safe_p = "".join(c if c.isalnum() or c in "-_" else "_" for c in playlist_id.strip())[:120]
+        safe_t = "".join(c if c.isalnum() or c in "-_" else "_" for c in track_id.strip())[:120]
+        for tile in cpath.glob(f"{safe_p}_{safe_t}_s*.jpg"):
+            try:
+                tile.unlink()
+            except OSError:
+                continue
+
     def downloads_remaining_count(self) -> int:
         """How many downloads are still in the pipeline (queued, running, or supplementary)."""
         pipeline = self.job_queue.qsize() + len(self.progress)
@@ -1316,7 +1465,7 @@ class DownloadService:
                 # Build fresh mapping and cache it
                 by_stem: Dict[str, Path] = {}
                 if base.is_dir():
-                    by_stem = {p.stem: p for p in list(base.glob("*.mp3")) + list(base.glob("*.m4a"))}
+                    by_stem = {p.stem: p for p in base.iterdir() if p.is_file() and p.suffix.lower() in AUDIO_EXTS}
                 cache_entry = self._set_cached_hydration(pl.id, by_stem)
 
             # Match tracks to files using cached mapping
@@ -1415,14 +1564,18 @@ class DownloadService:
         # Each thread owns its own YtDlpAudioDownloader — yt-dlp is not thread-safe to share.
         local_ytdlp = YtDlpAudioDownloader(self.root)
 
-        # Only the first thread to arrive re-enqueues interrupted tracks.
+        # Only the first thread to arrive re-enqueues interrupted tracks. The claim
+        # happens under the lock, the enqueue outside it: _enqueue_download takes the
+        # same non-reentrant lock, so calling it while holding it would deadlock.
         with self._lock:
-            if not self._startup_enqueue_done:
+            first = not self._startup_enqueue_done
+            if first:
                 self._startup_enqueue_done = True
-                for pl in list(self.playlists.values()):
-                    for track in list(pl.tracks):
-                        if track.status == DownloadStatus.queued and not self._track_has_resolved_file(track):
-                            self._enqueue_download(pl.id, track.id)
+        if first:
+            for pl in list(self.playlists.values()):
+                for track in list(pl.tracks):
+                    if track.status == DownloadStatus.queued and not self._track_has_resolved_file(track):
+                        self._enqueue_download(pl.id, track.id)
 
         while True:
             job = self.job_queue.get()
@@ -1844,6 +1997,7 @@ class DownloadService:
                     self._analyze_track_loudness(pl_id, track)
                     self._preemptive_cover_tile_generation(pl_id, track_id)
                     self._invalidate_hydration_cache(pl_id)
+                    self._rebuild_cleanup(pl_id, track_id)
                     if not supplementary or track.status != DownloadStatus.done:
                         pl.update_track_status(track_id, DownloadStatus.done)
                 elif supplementary:
@@ -1875,6 +2029,7 @@ class DownloadService:
             finally:
                 with self._lock:
                     self._pending_job_keys.discard(job_key)
+                self._rebuild_cleanup(pl_id, track_id)
                 self.progress.pop(track_id, None)
                 try:
                     delay = float(

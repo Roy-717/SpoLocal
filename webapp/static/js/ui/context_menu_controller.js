@@ -354,8 +354,8 @@ export class PlaylistContextMenuController {
                     this.editModal.openPlaylistEditModal({ id: pid, name: name, bio: bio });
                 }
             }, false);
-            const quality_labels = { '64': 'Low (64 kbps)', '120': 'Medium (120 kbps)', '192': 'High (192 kbps)' };
-            ['64', '120', '192'].forEach((q) => {
+            const quality_labels = { '64': 'Data Saver', '192': 'Highest' };
+            ['64', '192'].forEach((q) => {
                 mkBtn('Download all at ' + quality_labels[q], () => {
                     const n = payload.playlistName || 'this playlist';
                     if (!confirm('Queue download of all tracks in "' + n + '" at ' + quality_labels[q] + '?')) return;

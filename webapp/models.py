@@ -74,7 +74,7 @@ class Track:
             rel = variants.get(str(quality))
             if rel:
                 return rel
-            legacy = {"low": "64", "mid": "120", "medium": "120", "high": "192"}
+            legacy = {"low": "64", "mid": "192", "medium": "192", "high": "192"}
             if quality in legacy and legacy[quality] in variants:
                 return variants[legacy[quality]]
         for key in sorted(variants.keys(), key=lambda k: int(k) if str(k).isdigit() else 0, reverse=True):

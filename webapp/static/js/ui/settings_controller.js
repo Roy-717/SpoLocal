@@ -28,6 +28,7 @@ export class SettingsController {
         hub.settingsDownloadValue = document.getElementById('settings-download-kbps-value');
         hub.settingsLibraryDownloadTiers = document.getElementById('settings-library-download-tiers');
         hub.settingsNormalizeLoudness = document.getElementById('settings-normalize-loudness');
+        hub.settingsReloadLibrary = document.getElementById('settings-reload-library');
 
         if (hub.settingsOpenBtn) {
             hub.settingsOpenBtn.addEventListener('click', () => this.open());
@@ -61,7 +62,7 @@ export class SettingsController {
             );
         }
         if (prefs && hub.settingsLibraryDownloadTiers) {
-            const quality_labels = { 64: 'Low (64 kbps)', 120: 'Medium (120 kbps)', 192: 'High (192 kbps)' };
+            const quality_labels = { 64: 'Data Saver', 192: 'Highest' };
             hub.settingsLibraryDownloadTiers.querySelectorAll('.quality-tier-btn').forEach((btn) => {
                 btn.addEventListener('click', () => {
                     const kbps = prefs.clampKbps(btn.getAttribute('data-kbps'));
@@ -82,6 +83,10 @@ export class SettingsController {
                     }
                 });
             });
+        }
+
+        if (hub.settingsReloadLibrary) {
+            hub.settingsReloadLibrary.addEventListener('click', () => this.reload_library());
         }
 
         const norm_prefs = window.SpolocalNormalizationPrefs;
@@ -131,6 +136,35 @@ export class SettingsController {
         const norm_prefs = window.SpolocalNormalizationPrefs;
         if (norm_prefs && hub.settingsNormalizeLoudness) {
             hub.settingsNormalizeLoudness.checked = norm_prefs.enabled();
+        }
+    }
+
+    /** Re-download every song at both tiers and delete all other formats. */
+    async reload_library() {
+        if (!confirm('Re-download every song in Data Saver and Highest, and delete all other formats? This can take a while.')) return;
+        try {
+            const r = await fetch('/api/downloads/reload', {
+                method: 'POST',
+                credentials: 'same-origin',
+            });
+            if (!r.ok) {
+                alert('Could not start the reload.');
+                return;
+            }
+            const data = await r.json();
+            const queued = Number(data.queued) || 0;
+            const skipped = Number(data.skipped) || 0;
+            const parts = ['Queued ' + queued + ' song' + (queued === 1 ? '' : 's') + ' at both qualities.'];
+            if (skipped) parts.push(skipped + ' skipped (no URL/title).');
+            const idle = document.getElementById('dl-idle-msg');
+            if (idle) {
+                idle.textContent = parts.join(' ');
+                idle.classList.remove('hidden');
+            }
+            if (this.download) this.download.watch_downloads();
+            this.close();
+        } catch (e) {
+            alert('Could not start the reload.');
         }
     }
 }

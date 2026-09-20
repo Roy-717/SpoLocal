@@ -26,7 +26,7 @@ webapp/
 │   │   ├── playlist/session.js  # Session controller: initializes all sub-controllers, wires DOM refs
 │   │   ├── player/
 │   │   │   ├── lyrics_controller.js  # Lyrics: fetch, render, LRC sync, color extraction, toggle
-│   │   │   ├── transport_controller.js # Playback: play/pause/seek/volume/shuffle/repeat/like
+│   │   │   ├── song_mix_controller.js # Song mix SPA: YouTube Mix streams for one track
 │   │   │   ├── queue_controller.js     # Queue: add/remove/reorder/manage queue sidebar
 │   │   │   └── player_state.js        # Shared state hub
 │   │   └── ui/column_resizer.js  # Track table column resizer

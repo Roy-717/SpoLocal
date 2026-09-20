@@ -113,12 +113,11 @@
         <div class="shrink-0 border-t border-[#404040] px-3 py-2 space-y-1.5">
             <div class="flex items-center justify-between gap-2">
                 <span class="text-[10px] text-[#727272] uppercase tracking-wide">Download quality</span>
-                <span id="atp-download-kbps-value" class="text-[10px] text-[#B3B3B3] tabular-nums">High (192 kbps)</span>
+                <span id="atp-download-kbps-value" class="text-[10px] text-[#B3B3B3] tabular-nums">Highest</span>
             </div>
             <div id="atp-download-tiers" class="quality-tier-group flex gap-1" role="radiogroup" aria-label="Download quality">
-                <button type="button" class="quality-tier-btn flex-1 rounded px-2 py-1 text-[10px] font-semibold" data-kbps="64">Low</button>
-                <button type="button" class="quality-tier-btn flex-1 rounded px-2 py-1 text-[10px] font-semibold" data-kbps="120">Medium</button>
-                <button type="button" class="quality-tier-btn flex-1 rounded px-2 py-1 text-[10px] font-semibold" data-kbps="192">High</button>
+                <button type="button" class="quality-tier-btn flex-1 rounded px-2 py-1 text-[10px] font-semibold" data-kbps="64">Data Saver</button>
+                <button type="button" class="quality-tier-btn flex-1 rounded px-2 py-1 text-[10px] font-semibold" data-kbps="192">Highest</button>
             </div>
         </div>
     </div>
@@ -137,25 +136,23 @@
                 <div class="settings-section">
                     <div class="flex items-center justify-between gap-2 mb-1">
                         <h3 class="text-sm font-semibold text-white">Playback quality</h3>
-                        <span id="settings-playback-kbps-value" class="text-xs text-[#1DB954] tabular-nums">High (192 kbps)</span>
+                        <span id="settings-playback-kbps-value" class="text-xs text-[#1DB954] tabular-nums">Highest</span>
                     </div>
-                    <p class="text-xs text-[#727272] mb-3">MP3 bitrate to play. Missing files download automatically.</p>
+                    <p class="text-xs text-[#727272] mb-3">Opus quality to play. Missing files download automatically.</p>
                     <div id="settings-playback-tiers" class="quality-tier-group flex gap-1" role="radiogroup" aria-label="Playback quality">
-                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="64">Low</button>
-                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="120">Medium</button>
-                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="192">High</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="64">Data Saver</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="192">Highest</button>
                     </div>
                 </div>
                 <div class="settings-section">
                     <div class="flex items-center justify-between gap-2 mb-1">
                         <h3 class="text-sm font-semibold text-white">Default download quality</h3>
-                        <span id="settings-download-kbps-value" class="text-xs text-[#1DB954] tabular-nums">High (192 kbps)</span>
+                        <span id="settings-download-kbps-value" class="text-xs text-[#1DB954] tabular-nums">Highest</span>
                     </div>
                     <p class="text-xs text-[#727272] mb-3">Used when adding songs from search.</p>
                     <div id="settings-download-tiers" class="quality-tier-group flex gap-1" role="radiogroup" aria-label="Download quality">
-                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="64">Low</button>
-                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="120">Medium</button>
-                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="192">High</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="64">Data Saver</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="192">Highest</button>
                     </div>
                 </div>
                 <div class="settings-section">
@@ -173,10 +170,18 @@
                     <h3 class="text-sm font-semibold text-white mb-1">Download library</h3>
                     <p class="text-xs text-[#727272] mb-3">Queue missing files for every playlist at a chosen quality.</p>
                     <div id="settings-library-download-tiers" class="quality-tier-group flex gap-1">
-                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="64">Low</button>
-                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="120">Medium</button>
-                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="192">High</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="64">Data Saver</button>
+                        <button type="button" class="quality-tier-btn flex-1 rounded-md px-3 py-2 text-xs font-semibold" data-kbps="192">Highest</button>
                     </div>
+                </div>
+                <div class="settings-section">
+                    <h3 class="text-sm font-semibold text-white mb-1">Rebuild library</h3>
+                    <p class="text-xs text-[#727272] mb-3">Re-download every song in both Data Saver and Highest, and delete all other formats.</p>
+                    <button type="button"
+                            id="settings-reload-library"
+                            class="w-full rounded-md px-3 py-2 text-xs font-semibold border border-[#535353] text-[#B3B3B3] hover:text-white hover:border-[#727272]">
+                        Reload all songs
+                    </button>
                 </div>
             </div>
         </div>
@@ -582,7 +587,7 @@
 
     <script type="application/json" id="playlist-json">{{ current_tracks_payload | default([], true) | tojson | safe }}</script>
     <script type="application/json" id="spolocal-player-boot">{{ {"playlistId": current.id if current else none, "isHome": is_home|default(false), "libraryPool": home_library_pool|default([], true), "catalog": playlist_catalog|default([], true)} | tojson | safe }}</script>
-    <script src="/static/js/audio_quality_prefs.js?v=4"></script>
+    <script src="/static/js/audio_quality_prefs.js?v=5"></script>
     <script src="/static/js/audio_normalization_prefs.js?v=3"></script>
     <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@3.0.0-beta.4/dist/base.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@3.0.0-beta.4/dist/extra.min.js"></script>
@@ -591,7 +596,7 @@
         window.butterchurn = butterchurn && butterchurn.default ? butterchurn.default : butterchurn;
         window.dispatchEvent(new Event('spolocal-butterchurn-ready'));
     </script>
-        <script type="module" src="/static/js/PlaylistSession.mjs?v=106"></script>
+        <script type="module" src="/static/js/PlaylistSession.mjs?v=107"></script>
     <script type="module" src="/static/pwa/pwa-entry.js"></script>
     <script src="/static/js/spolocal_chrome.js?v=32" defer></script>
 </body>

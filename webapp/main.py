@@ -32,6 +32,7 @@ from fastapi.responses import (
 )
 from fastapi.templating import Jinja2Templates
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.staticfiles import NotModifiedResponse, StaticFiles
 
@@ -1071,15 +1072,27 @@ async def api_track_details(playlist_id: str, track_id: str, body: TrackDetailsB
 
 @app.get("/api/playlists/{playlist_id}/tracks/{track_id}/loudness-gain")
 async def api_track_loudness_gain(playlist_id: str, track_id: str):
-    try:
-        gain = await asyncio.to_thread(service.ensure_track_loudness_gain, playlist_id, track_id)
-    except Exception:
-        return JSONResponse({"loudness_gain_db": None})
-    if gain is None:
-        pl = service.get_playlist(playlist_id.strip())
-        if not pl or not pl.get_track(track_id.strip()):
-            raise HTTPException(status_code=404, detail="Track not found")
-    return JSONResponse({"loudness_gain_db": gain})
+    """Return the cached loudness gain, or kick off background analysis and return pending.
+
+    Analysis runs ffmpeg ebur128 over the whole file (seconds), so never block playback on it.
+    The client polls while `pending` is true until the gain is cached.
+    """
+    pl = service.get_playlist(playlist_id.strip())
+    if not pl:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    track = pl.get_track(track_id.strip())
+    if not track:
+        raise HTTPException(status_code=404, detail="Track not found")
+    if track.loudness_gain_db is None:
+        async def _analyze_in_background():
+            try:
+                await asyncio.to_thread(service.ensure_track_loudness_gain, pl.id, track.id)
+            except Exception:
+                pass
+
+        asyncio.get_running_loop().create_task(_analyze_in_background())
+        return JSONResponse({"loudness_gain_db": None, "pending": True})
+    return JSONResponse({"loudness_gain_db": track.loudness_gain_db})
 
 
 @app.get("/api/playlist/state")
@@ -1793,6 +1806,14 @@ async def api_playlist_quality_downloads(playlist_id: str, body: QualityDownload
 async def api_quality_downloads_all(body: QualityDownloadBody):
     """Queue missing quality variants for every track in every playlist."""
     result = service.queue_all_quality_downloads(body.quality)
+    return JSONResponse({"ok": True, **result})
+
+
+@app.post("/api/downloads/reload")
+async def api_reload_library():
+    """Re-download every track at both tiers and delete every other format."""
+    # Enqueues per-track work with file I/O; keep it off the event loop.
+    result = await run_in_threadpool(service.reload_library_all_qualities)
     return JSONResponse({"ok": True, **result})
 
 

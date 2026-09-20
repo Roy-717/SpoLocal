@@ -35,6 +35,20 @@ def extract_cover(path: Path) -> Optional[CoverBlob]:
                         mime = mime.decode("utf-8", "replace")
                     return bytes(apic.data), mime
             return None
+        if suffix == ".opus":
+            from mutagen.flac import Picture
+            from mutagen.oggopus import OggOpus
+            import base64
+
+            audio = OggOpus(path)
+            for block in audio.get("metadata_block_picture") or []:
+                try:
+                    pic = Picture(base64.b64decode(block))
+                except Exception:
+                    continue
+                if pic.data:
+                    return bytes(pic.data), (pic.mime or "image/jpeg")
+            return None
         if suffix in (".m4a", ".mp4", ".m4b"):
             from mutagen.mp4 import MP4, MP4Cover
 
@@ -74,6 +88,15 @@ def extract_album(path: Path) -> Optional[str]:
                     else:
                         s = str(tx).strip()
                     return s or None
+            return None
+        if suffix == ".opus":
+            from mutagen.oggopus import OggOpus
+
+            audio = OggOpus(path)
+            vals = audio.get("album")
+            if vals and vals[0]:
+                s = str(vals[0]).strip()
+                return s or None
             return None
         if suffix in (".m4a", ".mp4", ".m4b"):
             from mutagen.mp4 import MP4
@@ -359,6 +382,18 @@ def write_track_tags(path: Path, title: str, artist: str, album: str) -> bool:
             else:
                 tags.delall("TALB")
             tags.save(path)
+            return True
+        if suffix == ".opus":
+            from mutagen.oggopus import OggOpus
+
+            audio = OggOpus(path)
+            audio["title"] = [title]
+            audio["artist"] = [artist]
+            if album:
+                audio["album"] = [album]
+            else:
+                audio.pop("album", None)
+            audio.save()
             return True
         if suffix in (".m4a", ".mp4", ".m4b"):
             from mutagen.mp4 import MP4

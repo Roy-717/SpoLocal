@@ -1,4 +1,4 @@
-import { PlaylistTransportController } from '../player/transport_controller.js?v=99';
+import { PlaylistTransportController } from '../player/transport_controller.js?v=100';
 import { PlaylistQueueController } from '../player/queue_controller.js?v=89';
 import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=89';
 import { PlaylistEditModalController } from '../ui/edit_modal_controller.js';
@@ -6,7 +6,7 @@ import { PlaylistContextMenuController } from '../ui/context_menu_controller.js?
 import { PlaylistDownloadController } from '../services/download_controller.js?v=94';
 import { PlaylistColumnResizer } from '../ui/column_resizer.js';
 import { PlaylistHomeViewController } from './home_view_controller.js?v=89';
-import { SettingsController } from '../ui/settings_controller.js';
+import { SettingsController } from '../ui/settings_controller.js?v=2';
 import { TrackInfoController } from '../ui/track_info_controller.js';
 import { TrackEditController } from '../ui/track_edit_controller.js';
 import { AudioNormalizationController } from '../player/audio_normalization_controller.js';

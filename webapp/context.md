@@ -37,7 +37,8 @@ webapp/
 │   │   │   ├── media_session_controller.js # PlaylistMediaSessionController: Media Session API + progress
 │   │   │   ├── playback_quality_controller.js # PlaybackQualityController: quality variants, downloads, loudness
 │   │   │   ├── lyrics_colors.js        # LyricsColorExtractor: pure cover-art palette math
-│   │   │   ├── lyrics_controller.js  # Lyrics: fetch, render, LRC sync, toggle (uses LyricsColorExtractor)
+│   │   │   ├── lyrics_visualizer.js    # LyricsVisualizerController: Milkdrop/paper/wave renderers + mode
+│   │   │   ├── lyrics_controller.js  # Lyrics: fetch, render, LRC sync, editor, toggle
 │   │   │   ├── song_mix_controller.js # Song mix SPA: YouTube Mix streams for one track
 │   │   │   ├── queue_controller.js     # Queue: add/remove/reorder/manage queue sidebar
 │   │   │   └── player_state.js        # Shared state hub

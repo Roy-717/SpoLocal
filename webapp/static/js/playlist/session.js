@@ -1,15 +1,16 @@
-import { PlaylistTransportController } from '../player/transport_controller.js?v=90';
+import { PlaylistTransportController } from '../player/transport_controller.js?v=99';
 import { PlaylistQueueController } from '../player/queue_controller.js?v=89';
 import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=89';
 import { PlaylistEditModalController } from '../ui/edit_modal_controller.js';
-import { PlaylistContextMenuController } from '../ui/context_menu_controller.js';
-import { PlaylistDownloadController } from '../services/download_controller.js';
+import { PlaylistContextMenuController } from '../ui/context_menu_controller.js?v=93';
+import { PlaylistDownloadController } from '../services/download_controller.js?v=94';
 import { PlaylistColumnResizer } from '../ui/column_resizer.js';
 import { PlaylistHomeViewController } from './home_view_controller.js?v=89';
 import { SettingsController } from '../ui/settings_controller.js';
 import { TrackInfoController } from '../ui/track_info_controller.js';
 import { TrackEditController } from '../ui/track_edit_controller.js';
 import { AudioNormalizationController } from '../player/audio_normalization_controller.js';
+import { SongMixController } from '../player/song_mix_controller.js?v=95';
 
 /**
  * Main orchestrator for the playlist page session.
@@ -34,13 +35,14 @@ export class PlaylistSessionController {
         this.settings = new SettingsController(state);
         this.trackInfo = new TrackInfoController(state);
         this.trackEdit = new TrackEditController(state);
+        this.songMix = new SongMixController(state);
 
         // Wire cross-controller references so each controller can call its peers
         this.transport.setCrossRefs(this.queue, this.lyrics, this.home);
         this.queue.setCrossRefs(this.lyrics);
         this.editModal.setCrossRefs(this.contextMenu);
         this.settings.setCrossRefs(this.transport, this.download);
-        this.contextMenu.setCrossRefs(this.queue, this.editModal, this.transport, this.trackInfo, this.download, this.trackEdit);
+        this.contextMenu.setCrossRefs(this.queue, this.editModal, this.transport, this.trackInfo, this.download, this.trackEdit, this.songMix);
         this.trackEdit.setCrossRefs(this.transport, this.queue, this.contextMenu);
         this.download.setCrossRefs(this);
     }
@@ -82,10 +84,28 @@ export class PlaylistSessionController {
             await this.transport.refresh_liked_keys_from_server();
             this.transport.update_like_button_ui();
             if (this.state.hub.queueVisible) this.queue.render_queue_list();
+        }).finally(() => {
+            const u = new URLSearchParams(location.search);
+            if (u.get('view') === 'mix' && u.get('playlist_id') && u.get('track_id')) {
+                void this.songMix.open({
+                    playlist_id: u.get('playlist_id'),
+                    track_id: u.get('track_id'),
+                    push: false,
+                });
+            }
         });
 
         window.addEventListener('popstate', () => {
-            const pid = new URLSearchParams(location.search).get('playlist_id');
+            const u = new URLSearchParams(location.search);
+            if (u.get('view') === 'mix' && u.get('playlist_id') && u.get('track_id')) {
+                void this.songMix.open({
+                    playlist_id: u.get('playlist_id'),
+                    track_id: u.get('track_id'),
+                    push: false,
+                });
+                return;
+            }
+            const pid = u.get('playlist_id');
             if (pid) this.navigatePlaylist(pid, false);
             else this.navigateHome(false);
         });
@@ -333,6 +353,7 @@ export class PlaylistSessionController {
         hub.progressTimer = null;
         hub.__dlJobsDomKey = '';
         hub.__dlErrDomKey = '';
+        hub.songMixView = false;
     }
 
     hideLyricsIfOpen() {
@@ -372,6 +393,7 @@ export class PlaylistSessionController {
             if (scroll_root) saved_scroll_top = scroll_root.scrollTop;
         }
         hub.isHomeView = false;
+        hub.songMixView = false;
         hub.playlistId = data.playlist_id;
         try { window.__spaPlaylistId = hub.playlistId; } catch (e) {}
         hub.tracks = data.tracks_payload || [];
@@ -421,6 +443,7 @@ export class PlaylistSessionController {
     applySpaHome(data) {
         const hub = this.state.hub;
         hub.isHomeView = true;
+        hub.songMixView = false;
         hub.playlistId = null;
         try { window.__spaPlaylistId = ''; } catch (e) {}
         hub.tracks = [];
@@ -440,7 +463,7 @@ export class PlaylistSessionController {
 
     async navigateHome(pushHistory) {
         const hub = this.state.hub;
-        if (hub.isHomeView && !hub.playlistId) return;
+        if (hub.isHomeView && !hub.playlistId && !hub.songMixView) return;
         this.hideLyricsIfOpen();
         try {
             const r = await fetch('/api/home/view');
@@ -460,7 +483,9 @@ export class PlaylistSessionController {
 
     async navigatePlaylist(pid, pushHistory, onLoaded) {
         const hub = this.state.hub;
-        if (!pid || pid === hub.playlistId) return;
+        if (!pid) return;
+        if (pid === hub.playlistId && !hub.songMixView) return;
+        hub.songMixView = false;
         this.hideLyricsIfOpen();
         try {
             const r = await fetch('/api/playlist/view?playlist_id=' + encodeURIComponent(pid));
@@ -497,7 +522,8 @@ export class PlaylistSessionController {
 
         if (pls !== hub.playlistId) {
             const urlPid = new URLSearchParams(location.search).get('playlist_id') || '';
-            if (urlPid) {
+            const mix_boot = new URLSearchParams(location.search).get('view') === 'mix';
+            if (urlPid && !mix_boot) {
                 try {
                     const r = await fetch('/api/playlist/view?playlist_id=' + encodeURIComponent(pls));
                     if (!r.ok) return;
@@ -518,8 +544,9 @@ export class PlaylistSessionController {
 
         if (pls === hub.playlistId) {
             try {
-                const urlPid = new URLSearchParams(location.search).get('playlist_id') || '';
-                if (urlPid !== pls) {
+                const u = new URLSearchParams(location.search);
+                const urlPid = u.get('playlist_id') || '';
+                if (urlPid !== pls && u.get('view') !== 'mix') {
                     history.replaceState(null, '', '/?playlist_id=' + encodeURIComponent(pls));
                 }
             } catch (e) {}

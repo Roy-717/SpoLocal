@@ -133,6 +133,12 @@ def ytdlp_youtube_opts() -> dict[str, Any]:
     return opts
 
 
+def ytdlp_stream_extract_opts() -> dict[str, Any]:
+    opts = dict(ytdlp_youtube_opts())
+    opts["format"] = ytdlp_audio_format() + "/bestaudio/bestaudio*"
+    return opts
+
+
 def ytdlp_stream_cmd(video_id: str, *, max_seconds: Optional[int] = None) -> list[str]:
     cmd = [
         "yt-dlp",

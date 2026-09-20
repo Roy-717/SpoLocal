@@ -17,6 +17,8 @@ export class PlaylistDownloadController {
         this._prevJobKeys = new Set();
         this.PROGRESS_MS_VISIBLE = 3000;
         this.PROGRESS_MS_HIDDEN = 12000;
+        this._watching = false;
+        this._idle_hits = 0;
         /** @type {import('../playlist/session.js').PlaylistSessionController|null} */
         this.session = null;
     }
@@ -31,8 +33,10 @@ export class PlaylistDownloadController {
         const hub = this.state.hub;
         if (!hub) return;
 
-        document.addEventListener('visibilitychange', () => this.armProgressTimer());
-        this.armProgressTimer();
+        document.addEventListener('visibilitychange', () => {
+            if (this._watching) this.armProgressTimer();
+        });
+        try { window.watchSpolocalDownloads = () => this.watch_downloads(); } catch (e) {}
         this.refreshProgress();
 
         if (hub.dlRetryAllErrors) {
@@ -46,7 +50,7 @@ export class PlaylistDownloadController {
                 })
                     .catch(() => {})
                     .finally(() => {
-                        this.refreshProgress();
+                        this.watch_downloads();
                     });
             });
         }
@@ -64,8 +68,26 @@ export class PlaylistDownloadController {
         return Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
     }
 
+    watch_downloads() {
+        this._watching = true;
+        this._idle_hits = 0;
+        this.armProgressTimer();
+        void this.refreshProgress();
+    }
+
+    stop_progress_timer() {
+        this._watching = false;
+        this._idle_hits = 0;
+        if (this.progressTimer) {
+            clearInterval(this.progressTimer);
+            this.progressTimer = null;
+        }
+    }
+
     armProgressTimer() {
         if (this.progressTimer) clearInterval(this.progressTimer);
+        this.progressTimer = null;
+        if (!this._watching) return;
         const ms = document.visibilityState === 'hidden' ? this.PROGRESS_MS_HIDDEN : this.PROGRESS_MS_VISIBLE;
         this.progressTimer = setInterval(() => this.refreshProgress(), ms);
     }
@@ -103,6 +125,16 @@ export class PlaylistDownloadController {
                 || (queue_depth != null && queue_depth > 0);
             const curKeys = new Set(entries.map(([k]) => k));
             let job_completed = false;
+            if (has_pending) {
+                this._idle_hits = 0;
+                if (!this._watching) {
+                    this._watching = true;
+                    this.armProgressTimer();
+                }
+            } else {
+                this._idle_hits += 1;
+                if (this._idle_hits >= 2) this.stop_progress_timer();
+            }
             if (this._prevJobKeys.size > 0) {
                 for (const k of this._prevJobKeys) {
                     if (!curKeys.has(k)) {
@@ -275,7 +307,7 @@ export class PlaylistDownloadController {
                                     credentials: 'same-origin',
                                     redirect: 'manual',
                                 }).catch(() => {}).finally(() => {
-                                    this.refreshProgress();
+                                    this.watch_downloads();
                                 });
                             });
 
@@ -396,7 +428,6 @@ export class PlaylistDownloadController {
         } catch (e) {
             alert('Could not queue downloads.');
         }
-        this.refreshProgress();
+        this.watch_downloads();
     }
-
 }

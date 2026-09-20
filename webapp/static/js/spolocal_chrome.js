@@ -354,6 +354,7 @@ document.addEventListener('click', function (e) {
 
     function stopPreview(opts) {
         const restore_library = !opts || opts.restore_library !== false;
+        if (window.SpolocalMse) window.SpolocalMse.stop();
         if (previewAudio) {
             previewAudio.pause();
             previewAudio.removeAttribute('src');
@@ -434,6 +435,27 @@ document.addEventListener('click', function (e) {
         return matches.some(function (m) { return String(m.track_id || '') === tid; });
     }
 
+    function set_row_loading(btn, loading) {
+        if (!btn) return;
+        if (loading) {
+            btn.dataset.loading = '1';
+            btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin text-[10px]"></i>';
+            btn.disabled = true;
+        } else {
+            delete btn.dataset.loading;
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-play text-[10px] pl-0.5"></i>';
+            sync_search_card_play_buttons();
+        }
+    }
+
+    async function prepare_stream_url(vid, btn) {
+        try {
+            await fetch('/api/stream/prepare?vid=' + encodeURIComponent(vid));
+        } catch (e) {}
+        set_row_loading(btn, false);
+    }
+
     function playPreview(hit, btn) {
         const vid = hit && typeof hit === 'object' ? (hit.video_id || '') : String(hit || '');
         if (!vid) return;
@@ -477,19 +499,41 @@ document.addEventListener('click', function (e) {
             hub._mediaDecodeRetries = 0;
             hub.audio.pause();
             const stream_src = streamSrcForVideoId(vid);
-            hub.audio.removeAttribute('src');
-            hub.audio.load();
-            hub.audio.src = stream_src;
-            hub.titleEl && (hub.titleEl.textContent = hit.title || '');
-            hub.subEl && (hub.subEl.textContent = (hit.artist || hit.channel || ''));
-            hub.audio.play().catch((err) => {
-                if (err && err.name === 'AbortError') return;
-                if (typeof hub.setPlayUi === 'function') hub.setPlayUi(false);
-            });
-            if (typeof hub.setPlayUi === 'function') hub.setPlayUi(true);
-            if (hub.lyricsController) hub.lyricsController.load_youtube_cover(vid);
-            if (hub.queueVisible && hub.queue) hub.queue.render_queue_list();
-            if (hub.lyricsVisible && hub.lyricsController) hub.lyricsController.fetchLyrics(true);
+            const after_meta = () => {
+                hub.titleEl && (hub.titleEl.textContent = hit.title || '');
+                hub.subEl && (hub.subEl.textContent = (hit.artist || hit.channel || ''));
+                if (typeof hub.setPlayUi === 'function') hub.setPlayUi(true);
+                if (hub.lyricsController) hub.lyricsController.load_youtube_cover(vid);
+                if (hub.queueVisible && hub.queue) hub.queue.render_queue_list();
+                if (hub.lyricsVisible && hub.lyricsController) hub.lyricsController.fetchLyrics(true);
+            };
+            const on_mse_end = () => {
+                if (typeof hub.onMseStreamEnded === 'function') hub.onMseStreamEnded();
+            };
+            const direct_play = () => {
+                hub.audio.src = stream_src;
+                hub.audio.play().catch((err) => {
+                    if (err && err.name === 'AbortError') return;
+                    if (typeof hub.setPlayUi === 'function') hub.setPlayUi(false);
+                });
+                after_meta();
+            };
+            const start_play = () => {
+                if (window.SpolocalMse && window.SpolocalMse.is_supported()) {
+                    window.SpolocalMse.play(vid, hub.audio, direct_play, hit.duration_sec, on_mse_end);
+                    after_meta();
+                } else {
+                    hub.audio.removeAttribute('src');
+                    hub.audio.load();
+                    direct_play();
+                }
+            };
+            if (btn && btn.classList.contains('track-play--row')) {
+                set_row_loading(btn, true);
+                void prepare_stream_url(vid, btn).then(start_play);
+            } else {
+                start_play();
+            }
             return;
         }
         if (previewAudio) {
@@ -504,6 +548,7 @@ document.addEventListener('click', function (e) {
         previewAudio.addEventListener('error', stopPreview);
     }
     window.stopSearchStream = stopPreview;
+    try { window.playPreview = playPreview; } catch (e) {}
 
     function closeAddToPlaylistPopover() {
         pendingAddHit = null;
@@ -869,11 +914,15 @@ document.addEventListener('click', function (e) {
         return (hit && hit.thumbnail_url) ? String(hit.thumbnail_url) : '';
     }
 
-    function build_recommendation_row(hit, index) {
+    function build_recommendation_row(hit, index, opts) {
+        opts = opts || {};
+        const plus_menu = !!opts.plus_menu;
         const vid = (hit && hit.video_id) ? String(hit.video_id) : '';
         const tr = document.createElement('tr');
         tr.className = 'track-row border-b border-[#282828]' + (vid ? ' track-row--playable' : '');
         if (vid) tr.setAttribute('data-youtube-video-id', vid);
+        tr.setAttribute('data-title', (hit && hit.title) ? String(hit.title) : '');
+        tr.setAttribute('data-artist', (hit && (hit.artist || hit.channel)) ? String(hit.artist || hit.channel) : '');
 
         const td_idx = document.createElement('td');
         td_idx.className = 'py-2 pl-0 pr-0 align-middle';
@@ -954,12 +1003,16 @@ document.addEventListener('click', function (e) {
         const add_btn = document.createElement('button');
         add_btn.type = 'button';
         add_btn.className = 'inline-flex h-8 w-8 items-center justify-center rounded-full text-[#B3B3B3] hover:text-white';
-        add_btn.title = 'Add to this playlist';
-        add_btn.setAttribute('aria-label', 'Add to this playlist');
+        add_btn.title = plus_menu ? 'Add to playlist' : 'Add to this playlist';
+        add_btn.setAttribute('aria-label', add_btn.title);
         add_btn.innerHTML = '<i class="fa-solid fa-plus text-sm"></i>';
         add_btn.addEventListener('click', async function (ev) {
             ev.stopPropagation();
             ev.preventDefault();
+            if (plus_menu) {
+                openAddToPlaylistPopover(hit, add_btn);
+                return;
+            }
             const pl_id = String(window.__spaPlaylistId || new URL(location.href).searchParams.get('playlist_id') || '');
             if (!pl_id) return;
             add_btn.disabled = true;
@@ -984,13 +1037,14 @@ document.addEventListener('click', function (e) {
         return tr;
     }
 
-    function render_playlist_recommendation_rows(container, hits) {
+    function render_playlist_recommendation_rows(container, hits, opts) {
+        opts = opts || {};
         if (!container) return;
         container.innerHTML = '';
         if (!hits || !hits.length) return;
         const table = document.createElement('table');
         table.className = 'w-full text-sm table-fixed';
-        table.setAttribute('id', 'playlist-recommendations-table');
+        table.setAttribute('id', opts.table_id || 'playlist-recommendations-table');
         const colgroup = document.createElement('colgroup');
         [
             ['0', '2rem'],
@@ -1018,7 +1072,7 @@ document.addEventListener('click', function (e) {
         table.appendChild(thead);
         const tbody = document.createElement('tbody');
         hits.forEach(function (hit, i) {
-            tbody.appendChild(build_recommendation_row(hit, i + 1));
+            tbody.appendChild(build_recommendation_row(hit, i + 1, opts));
         });
         table.appendChild(tbody);
         container.appendChild(table);
@@ -1367,11 +1421,15 @@ document.addEventListener('click', function (e) {
             const next = covers.trackCoverUrl(pid, tid, vid);
             if (next) img.src = next;
         });
-        el.querySelectorAll('#playlist-recommendations-grid img[data-video-id], #playlist-recommendations-table img[data-video-id]').forEach(function (img) {
+        el.querySelectorAll('#playlist-recommendations-grid img[data-video-id], #playlist-recommendations-table img[data-video-id], #song-mix-table img[data-video-id]').forEach(function (img) {
             const vid = String(img.getAttribute('data-video-id') || '').trim();
             const next = covers.youtubeThumbUrl(vid);
             if (next) img.src = next;
         });
+    };
+
+    window.renderSpolocalMixRows = function (container, hits, opts) {
+        render_playlist_recommendation_rows(container, hits, opts || {});
     };
 
     window.bustPlaylistCoverImages = function (root) {

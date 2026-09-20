@@ -41,6 +41,9 @@ export class PlaylistTransportController {
 
         // Seek wiring
         if (hub.seek) {
+            hub.seek.addEventListener('pointerdown', () => {
+                hub.seeking = true;
+            });
             hub.seek.addEventListener('input', () => {
                 hub.seeking = true;
                 if (hub.audio.duration) {
@@ -116,8 +119,9 @@ export class PlaylistTransportController {
             this.updateMediaSessionPlaybackState();
         });
         hub.audio.addEventListener('ended', () => {
+            if (window.SpolocalMse && window.SpolocalMse.is_active()) return;
             if (this.isSearchStreamPlayback()) {
-                this.setPlayUi(false);
+                this.advance_search_stream();
                 return;
             }
             this.playAtDelta(1);
@@ -149,7 +153,7 @@ export class PlaylistTransportController {
         });
 
         hub.audio.addEventListener('timeupdate', () => {
-            const isUserInteracting = hub.seeking || document.activeElement === hub.seek;
+            const isUserInteracting = hub.seeking;
             if (!isUserInteracting && hub.audio.duration) {
                 hub.seek.value = String(Math.floor((hub.audio.currentTime / hub.audio.duration) * 1000));
             }
@@ -222,7 +226,7 @@ export class PlaylistTransportController {
                 if (!row) return;
                 const id = row.getAttribute('data-track-id');
                 const src = row.getAttribute('data-play-src');
-                if (!src) return;
+                if (!id || !src) return;
                 this.playTrackById(id);
                 return;
             }
@@ -772,10 +776,31 @@ export class PlaylistTransportController {
         played.style.width = played_pct + '%';
     }
 
+    seek_audio_to(t) {
+        const hub = this.state.hub;
+        if (window.SpolocalMse && window.SpolocalMse.is_active()) {
+            window.SpolocalMse.seek_to(t);
+            return;
+        }
+        if (hub.audio) hub.audio.currentTime = t;
+    }
+
     seek_to_time_from_slider() {
         const hub = this.state.hub;
-        if (hub.audio.duration) {
-            hub.audio.currentTime = (parseFloat(hub.seek.value) / 1000) * hub.audio.duration;
+        const dur = hub.audio && hub.audio.duration;
+        if (!dur) return;
+        const t = (parseFloat(hub.seek.value) / 1000) * dur;
+        if (window.SpolocalMse && window.SpolocalMse.is_active()) {
+            let done = false;
+            const finish = () => {
+                if (done) return;
+                done = true;
+                hub.seeking = false;
+            };
+            window.SpolocalMse.seek_to(t, finish);
+            setTimeout(finish, 2500);
+        } else {
+            hub.audio.currentTime = t;
         }
         if (this.lyrics) this.lyrics.sync_stream_video_clock(true);
     }
@@ -801,6 +826,11 @@ export class PlaylistTransportController {
     toggle_main_play() {
         const hub = this.state.hub;
         if (this.isSearchStreamPlayback() && hub.searchStreamHit) {
+            if (window.SpolocalMse && window.SpolocalMse.is_active()) {
+                if (hub.audio.paused) hub.audio.play().catch(err => this.handlePlayError(err));
+                else hub.audio.pause();
+                return;
+            }
             const vid = String(hub.searchStreamHit.video_id || '').trim();
             const want = typeof window.spolocalStreamSrc === 'function'
                 ? window.spolocalStreamSrc(vid)
@@ -1003,15 +1033,15 @@ export class PlaylistTransportController {
             ['previoustrack', () => this.playAtDelta(-1)],
             ['nexttrack', () => this.playAtDelta(1)],
             ['seekbackward', (d) => {
-                this.state.hub.audio.currentTime = Math.max(0, this.state.hub.audio.currentTime - (d.seekOffset || 10));
+                this.seek_audio_to(Math.max(0, this.state.hub.audio.currentTime - (d.seekOffset || 10)));
                 this.updateMediaSessionPlaybackState();
             }],
             ['seekforward', (d) => {
-                this.state.hub.audio.currentTime = Math.min(this.state.hub.audio.duration || 0, this.state.hub.audio.currentTime + (d.seekOffset || 10));
+                this.seek_audio_to(Math.min(this.state.hub.audio.duration || 0, this.state.hub.audio.currentTime + (d.seekOffset || 10)));
                 this.updateMediaSessionPlaybackState();
             }],
             ['seekto', (d) => {
-                this.state.hub.audio.currentTime = d.seekTime;
+                this.seek_audio_to(d.seekTime);
                 this.updateMediaSessionPlaybackState();
             }]
         ];
@@ -1120,7 +1150,7 @@ export class PlaylistTransportController {
             ).trim();
             if (vid) {
                 row = document.querySelector(
-                    '#playlist-recommendations-table tr.track-row[data-youtube-video-id="' + CSS.escape(vid) + '"]'
+                    '#playlist-recommendations-table tr.track-row[data-youtube-video-id="' + CSS.escape(vid) + '"], #song-mix-table tr.track-row[data-youtube-video-id="' + CSS.escape(vid) + '"]'
                 );
             }
         }
@@ -1155,6 +1185,57 @@ export class PlaylistTransportController {
     isSearchStreamPlayback() {
         const hub = this.state.hub;
         return !!(hub && hub.searchStreamActive);
+    }
+
+    advance_search_stream() {
+        const hub = this.state.hub;
+        if (!hub || !hub.audio) return;
+        if (hub.repeatMode === 'one' && hub.searchStreamHit) {
+            hub.audio.currentTime = 0;
+            hub.audio.play().catch(() => {});
+            return;
+        }
+        const table = document.getElementById('song-mix-table');
+        if (!table) {
+            this.setPlayUi(false);
+            return;
+        }
+        const current_vid = String((hub.searchStreamHit && hub.searchStreamHit.video_id) || '').trim();
+        const rows = Array.from(table.querySelectorAll('tr.track-row[data-youtube-video-id]'));
+        if (!rows.length) {
+            this.setPlayUi(false);
+            return;
+        }
+        let next_row = null;
+        if (hub.shuffleOn) {
+            next_row = rows[Math.floor(Math.random() * rows.length)];
+        } else {
+            const idx = rows.findIndex((r) => r.getAttribute('data-youtube-video-id') === current_vid);
+            if (idx < 0) {
+                next_row = rows[0];
+            } else if (idx + 1 < rows.length) {
+                next_row = rows[idx + 1];
+            } else if (hub.repeatMode === 'all') {
+                next_row = rows[0];
+            }
+        }
+        if (!next_row) {
+            this.setPlayUi(false);
+            return;
+        }
+        const vid = String(next_row.getAttribute('data-youtube-video-id') || '').trim();
+        const hit = {
+            video_id: vid,
+            title: next_row.getAttribute('data-title') || '',
+            artist: next_row.getAttribute('data-artist') || '',
+            channel: next_row.getAttribute('data-artist') || '',
+        };
+        const btn = next_row.querySelector('.track-play');
+        if (typeof window.playPreview === 'function') {
+            window.playPreview(hit, btn);
+        } else {
+            this.setPlayUi(false);
+        }
     }
 
     isStreamingPlayback() {
@@ -1305,6 +1386,8 @@ export class PlaylistTransportController {
             return resp.ok || resp.status === 303;
         } catch (e) {
             return false;
+        } finally {
+            if (typeof window.watchSpolocalDownloads === 'function') window.watchSpolocalDownloads();
         }
     }
 

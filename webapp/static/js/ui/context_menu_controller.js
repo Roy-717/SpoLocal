@@ -22,16 +22,19 @@ export class PlaylistContextMenuController {
         this.trackEdit = null;
         /** @type {import('../services/download_controller.js').PlaylistDownloadController|null} */
         this.download = null;
+        /** @type {import('../player/song_mix_controller.js').SongMixController|null} */
+        this.songMix = null;
     }
 
     /** Set cross-controller references after all controllers are created. */
-    setCrossRefs(queue, editModal, transport, trackInfo, download, trackEdit) {
+    setCrossRefs(queue, editModal, transport, trackInfo, download, trackEdit, songMix) {
         this.queue = queue;
         this.editModal = editModal;
         this.transport = transport;
         this.trackInfo = trackInfo;
         this.download = download;
         this.trackEdit = trackEdit;
+        this.songMix = songMix;
     }
 
     /** Wire up context menu event listeners. */
@@ -260,6 +263,11 @@ export class PlaylistContextMenuController {
                     }
                 }, false);
             }
+            if (payload.ytid || (payload.playlistId && payload.trackId)) {
+                mkBtn('Go to mix', () => {
+                    if (this.songMix) this.songMix.open_from_payload(payload);
+                }, false);
+            }
             const spec = this.trackDownloadMenuSpec(payload.status, payload.playSrc, payload.url, payload.ytid);
             if (spec) {
                 mkBtn(spec.label, () => {
@@ -311,6 +319,24 @@ export class PlaylistContextMenuController {
                 document.body.appendChild(f);
                 f.submit();
             }, true);
+        } else if (payload.type === 'mix_hit') {
+            const hit = {
+                video_id: payload.ytid,
+                title: payload.title || '',
+                artist: payload.artist || '',
+                channel: payload.artist || '',
+                url: payload.url || '',
+            };
+            mkBtn('Add to playlist', () => {
+                if (typeof window.openAddToPlaylistAtPoint === 'function') {
+                    window.openAddToPlaylistAtPoint(hit, clientX, clientY);
+                }
+            }, false);
+            if (payload.ytid && !hub.songMixView) {
+                mkBtn('Go to mix', () => {
+                    if (this.songMix) this.songMix.open_from_payload(payload);
+                }, false);
+            }
         } else if (payload.type === 'playlist') {
             mkBtn('Edit playlist', () => {
                 const pid = payload.playlistId;
@@ -395,12 +421,32 @@ export class PlaylistContextMenuController {
         }
         const trackRow = e.target.closest('tr.track-row');
         if (trackRow) {
-            e.preventDefault();
             const tid = trackRow.getAttribute('data-track-id');
-            if (!tid) return;
-            const payload = this.buildTrackMenuPayload(tid, trackRow);
-            if (!payload) return;
-            this.openContextMenu(e.clientX, e.clientY, payload);
+            if (tid) {
+                const payload = this.buildTrackMenuPayload(tid, trackRow);
+                if (!payload) return;
+                e.preventDefault();
+                e.stopPropagation();
+                this.openContextMenu(e.clientX, e.clientY, payload);
+                return;
+            }
+            const vid = (trackRow.getAttribute('data-youtube-video-id') || '').trim();
+            if (vid.length === 11) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.openContextMenu(e.clientX, e.clientY, {
+                    type: 'mix_hit',
+                    ytid: vid,
+                    title: trackRow.getAttribute('data-title') || '',
+                    artist: trackRow.getAttribute('data-artist') || '',
+                    playlistId: String(hub.playlistId || ''),
+                    trackId: '',
+                    playSrc: '',
+                    url: 'https://www.youtube.com/watch?v=' + encodeURIComponent(vid),
+                    status: '',
+                    album: '',
+                });
+            }
             return;
         }
         const plCard = e.target.closest('.playlist-card');

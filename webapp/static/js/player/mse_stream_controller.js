@@ -30,6 +30,10 @@ export class MseStreamController {
         this._on_seek_done = null;
         this._started = false;
         this._op = 0;
+        this._mode = 'stream';
+        this._src_url = '';
+        this._blob_url = '';
+        this._on_fallback = null;
         this.SLICE = 512 * 1024;
         this.INIT_BYTES = 32 * 1024;
         this.BUFFER_AHEAD_SEC = 10;
@@ -44,7 +48,15 @@ export class MseStreamController {
     }
 
     is_active() {
-        return !!(this._audio && this._ms && !this._aborted);
+        if (!this._audio || !this._ms || this._aborted) return false;
+        // If anything replaced the element source, this controller is stale and
+        // the player should use the native path instead.
+        if (this._blob_url && this._audio.src !== this._blob_url) return false;
+        return true;
+    }
+
+    is_local_media() {
+        return this._mode === 'media';
     }
 
     should_advance_on_ended() {
@@ -81,20 +93,13 @@ export class MseStreamController {
     }
 
     async play(vid, audio_el, on_fallback, duration_sec, on_complete) {
-        this.stop();
-        this._gen++;
+        this._reset('stream', audio_el, on_fallback, on_complete, duration_sec);
         const gen = this._gen;
         this._vid = vid;
-        this._audio = audio_el;
-        this._aborted = false;
-        this._completed = false;
-        this._file_complete = false;
-        this._started = false;
-        this._on_complete = on_complete || null;
-        this._duration = Number(duration_sec) > 0 ? Number(duration_sec) : 0;
+        this._src_url = '';
 
         if (!this.is_supported()) {
-            if (on_fallback) on_fallback();
+            if (this._on_fallback) this._on_fallback();
             return;
         }
 
@@ -113,10 +118,80 @@ export class MseStreamController {
         } catch (e) {}
 
         if (gen !== this._gen) return;
+        this._begin(gen, ext, filesize);
+    }
 
+    /**
+     * Play a local /media file through MSE so Data Saver fetches byte slices on
+     * demand instead of letting the browser buffer the whole file.
+     */
+    async play_media(src, audio_el, on_fallback, on_complete) {
+        this._reset('media', audio_el, on_fallback, on_complete, 0);
+        const gen = this._gen;
+        this._vid = '';
+        this._src_url = src;
+
+        if (!this.is_supported()) {
+            if (this._on_fallback) this._on_fallback();
+            return;
+        }
+
+        let ext = 'webm';
+        let filesize = 0;
+        try {
+            const prefs = window.SpolocalQualityPrefs;
+            const path = prefs ? prefs.normalizeMediaPath(src) : '';
+            const r = await fetch('/api/media/prepare?path=' + encodeURIComponent(path));
+            if (gen !== this._gen) return;
+            if (r.ok) {
+                const data = await r.json();
+                ext = data.ext || 'webm';
+                filesize = data.filesize || 0;
+                const d = Number(data.duration_sec);
+                if (d > 0) this._duration = d;
+            }
+        } catch (e) {}
+
+        if (gen !== this._gen) return;
+        // Slicing needs a size and a duration (seek bar + end detection). If the
+        // server could not report them, fall back to plain native playback.
+        if (!(filesize > 0) || !(this._duration > 0)) {
+            if (this._on_fallback) this._on_fallback();
+            return;
+        }
+        this._begin(gen, ext, filesize);
+    }
+
+    _reset(mode, audio_el, on_fallback, on_complete, duration_sec) {
+        this.stop();
+        this._gen++;
+        this._mode = mode;
+        this._audio = audio_el;
+        if (audio_el) {
+            // Stop the previous source while the new one is resolved.
+            audio_el.pause();
+            audio_el.removeAttribute('src');
+            try { audio_el.load(); } catch (e) {}
+        }
+        this._aborted = false;
+        this._completed = false;
+        this._file_complete = false;
+        this._started = false;
+        this._fetching = false;
+        this._seeking = false;
+        this._jump_seek = false;
+        this._need_init = true;
+        this._pos = 0;
+        this._total = 0;
+        this._duration = Number(duration_sec) > 0 ? Number(duration_sec) : 0;
+        this._on_fallback = typeof on_fallback === 'function' ? on_fallback : null;
+        this._on_complete = on_complete || null;
+    }
+
+    _begin(gen, ext, filesize) {
         const codec = this._codec_map[ext] || this._codec_map.webm;
         if (!MediaSource.isTypeSupported(codec)) {
-            if (on_fallback) on_fallback();
+            if (this._on_fallback) this._on_fallback();
             return;
         }
 
@@ -129,7 +204,9 @@ export class MseStreamController {
 
         const ms = new MediaSource();
         this._ms = ms;
-        audio_el.src = URL.createObjectURL(ms);
+        const blob_url = URL.createObjectURL(ms);
+        this._blob_url = blob_url;
+        this._audio.src = blob_url;
 
         ms.addEventListener('sourceopen', () => {
             if (gen !== this._gen) return;
@@ -137,7 +214,7 @@ export class MseStreamController {
             try {
                 sb = ms.addSourceBuffer(codec);
             } catch (e) {
-                this._fallback(on_fallback);
+                this._fallback();
                 return;
             }
             this._sb = sb;
@@ -151,7 +228,7 @@ export class MseStreamController {
             this._maybe_fetch_next(gen);
             this._check_natural_end();
         };
-        audio_el.addEventListener('timeupdate', this._on_time_bound);
+        this._audio.addEventListener('timeupdate', this._on_time_bound);
     }
 
     _cluster_index(buf) {
@@ -376,6 +453,8 @@ export class MseStreamController {
 
     _check_natural_end() {
         if (this._completed || this._aborted || this._seeking) return;
+        // Ignore once the element source was replaced (stale controller).
+        if (!this.is_active()) return;
         const audio = this._audio;
         const dur = this._song_duration();
         if (!audio || !dur) return;
@@ -390,6 +469,8 @@ export class MseStreamController {
 
     async _maybe_fetch_next(gen) {
         if (gen !== this._gen || this._aborted) return;
+        // Stop fetching once the element source was replaced (stale controller).
+        if (!this.is_active()) return;
         if (this._fetching || this._file_complete || !this._sb) return;
         if (this._sb.updating) return;
         if (this._seeking && this._is_buffered(this._seek_target)) return;
@@ -414,13 +495,16 @@ export class MseStreamController {
         const span = init ? this.INIT_BYTES : this.SLICE;
         const end = this._total ? Math.min(start + span - 1, this._total - 1) : start + span - 1;
         try {
-            const r = await fetch('/api/stream?vid=' + encodeURIComponent(this._vid), {
+            const url = this._mode === 'media'
+                ? this._src_url
+                : '/api/stream?vid=' + encodeURIComponent(this._vid);
+            const r = await fetch(url, {
                 headers: { Range: 'bytes=' + start + '-' + end },
             });
             if (gen !== this._gen || op !== this._op) return;
             if (!r.ok) {
                 if (this._seeking) this._finish_seek();
-                else this._fallback(null);
+                else this._fallback();
                 return;
             }
             let buf = await r.arrayBuffer();
@@ -454,15 +538,16 @@ export class MseStreamController {
         } catch (e) {
             if (gen !== this._gen) return;
             if (this._seeking) this._finish_seek();
-            else this._fallback(null);
+            else this._fallback();
         } finally {
             this._fetching = false;
         }
     }
 
-    _fallback(on_fallback) {
+    _fallback() {
+        const cb = this._on_fallback;
         this.stop();
-        if (on_fallback) on_fallback();
+        if (cb) cb();
     }
 
     stop() {
@@ -477,6 +562,7 @@ export class MseStreamController {
             try { done(); } catch (e) {}
         }
         this._on_complete = null;
+        this._on_fallback = null;
         this._need_init = true;
         this._jump_seek = false;
         this._started = false;
@@ -491,11 +577,13 @@ export class MseStreamController {
             this._sb = null;
         }
         if (this._ms) {
-            if (this._audio && this._audio.src) {
-                try { URL.revokeObjectURL(this._audio.src); } catch (e) {}
+            if (this._blob_url) {
+                try { URL.revokeObjectURL(this._blob_url); } catch (e) {}
             }
             this._ms = null;
         }
+        this._blob_url = '';
+        this._src_url = '';
         this._pos = 0;
         this._total = 0;
     }

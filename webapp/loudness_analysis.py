@@ -78,6 +78,16 @@ def ffmpeg_executable(root: Path) -> str:
     return found or "ffmpeg"
 
 
+def ffprobe_executable(root: Path) -> str:
+    bin_dir = root / "ffmpeg-2026-05-06-git-f2e5eff3ff-essentials_build" / "bin"
+    name = "ffprobe.exe" if os.name == "nt" else "ffprobe"
+    local = bin_dir / name
+    if local.is_file():
+        return str(local)
+    found = shutil.which("ffprobe")
+    return found or "ffprobe"
+
+
 def analyze_loudness_gain_db(
     path: Path,
     root: Path,

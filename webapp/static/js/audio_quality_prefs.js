@@ -140,7 +140,7 @@
     // It may only stand in for Highest; for Data Saver, wait for the real file
     // instead of quietly playing something better than the user asked for.
     function streamFitsTier(kbps) {
-        return snapKbps(kbps) >= MAX_KBPS;
+        return snapKbps(kbps) >= DEFAULT_KBPS;
     }
 
     function syncTierGroup(container, kbps) {

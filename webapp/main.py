@@ -1142,9 +1142,16 @@ app.mount("/static", JsMimeStaticFiles(directory=str(_static_dir)), name="static
 _media_root = root / "downloads"
 _media_root.mkdir(parents=True, exist_ok=True)
 
-media_server = MediaServer(_media_root)
+media_server = MediaServer(_media_root, root)
+
+
+@app.get("/api/media/prepare")
+async def api_media_prepare(path: str):
+    """Metadata (ext/size/duration) for sliced local playback via MSE."""
+    return JSONResponse(await asyncio.to_thread(media_server.prepare, path))
 
 
 @app.get("/media/{media_path:path}")
 async def serve_media(media_path: str, request: Request):
-    return media_server.serve(media_path, request)
+    sliced = request.query_params.get("sliced") == "1"
+    return media_server.serve(media_path, request, sliced=sliced)

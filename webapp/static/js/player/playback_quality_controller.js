@@ -191,6 +191,7 @@ export class PlaybackQualityController {
     replace_audio_src(src, resume_time) {
         const hub = this.state.hub;
         if (!hub.audio || !src) return;
+        if (window.SpolocalMse) window.SpolocalMse.stop();
         this._audioSrcGen = (this._audioSrcGen || 0) + 1;
         const gen = this._audioSrcGen;
         hub.audio.pause();

@@ -219,6 +219,7 @@ export class PlaylistQueueController {
             youtube_video_id: e.youtube_video_id,
             source_playlist_id: e.source_playlist_id,
         };
+        if (window.SpolocalMse) window.SpolocalMse.stop();
         hub.audio.src = e.play_src;
         hub.titleEl.textContent = e.title || '—';
         hub.subEl.textContent = e.artist || '—';

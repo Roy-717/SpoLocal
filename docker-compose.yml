@@ -20,6 +20,8 @@ services:
       - ./webapp/tag_metadata.py:/app/webapp/tag_metadata.py
       - ./webapp/models.py:/app/webapp/models.py
       - ./webapp/audio_quality.py:/app/webapp/audio_quality.py
+      - ./webapp/media_server.py:/app/webapp/media_server.py
+      - ./webapp/loudness_analysis.py:/app/webapp/loudness_analysis.py
       - ./spotify_scraper.py:/app/spotify_scraper.py
     # Optional: copy webapp/.env.example → webapp/.env, then add:
     #   - ./webapp/.env:/app/webapp/.env:ro

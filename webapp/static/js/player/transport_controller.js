@@ -427,13 +427,13 @@ export class PlaylistTransportController {
             youtube_video_id: (t.youtube_video_id || entry.youtube_video_id || '').trim(),
             source_playlist_id: playlistId,
         };
-        hub.audio.src = playSrc;
+        const mse_handled = this._attach_playback_source(playSrc, () => this.playAtDelta(1));
         hub.titleEl.textContent = t.title || entry.title || '—';
         hub.subEl.textContent = t.artist || entry.artist || '—';
         void this.quality.apply_track_loudness(t, playlistId);
         if (this.lyrics) this.lyrics.loadCover(trackId, playlistId);
         this.updatePlayingRow();
-        hub.audio.play().catch((err) => this.handlePlayError(err));
+        if (!mse_handled) hub.audio.play().catch((err) => this.handlePlayError(err));
         if (hub.lyricsVisible && this.lyrics) this.lyrics.fetchLyrics(true);
         this.mediaSession.updateMediaSessionMetadata(hub.playingTracks[0], playlistId);
         this.likes.update_like_button_ui();
@@ -827,6 +827,56 @@ export class PlaylistTransportController {
         return !!(hub && hub.searchStreamActive);
     }
 
+    _data_saver_audio_src(src) {
+        const prefs = window.SpolocalQualityPrefs;
+        const is_local = prefs ? !!prefs.normalizeMediaPath(src) : false;
+        const data_saver = prefs ? prefs.playbackKbps() <= 64 : false;
+        // Data Saver: route local files through the sliced /media endpoint so the
+        // browser fetches byte-range slices as the playhead advances.
+        if (data_saver && is_local && src) {
+            return src + (src.indexOf('?') >= 0 ? '&' : '?') + 'sliced=1';
+        }
+        return src;
+    }
+
+    /**
+     * Attach the resolved source for playback. Data Saver local WebM files go
+     * through MSE (true byte slicing); everything else plays natively.
+     * Returns true when MSE took over, so the caller skips the native play().
+     */
+    _attach_playback_source(src, on_complete) {
+        const hub = this.state.hub;
+        const prefs = window.SpolocalQualityPrefs;
+        const mse = window.SpolocalMse;
+        const local_path = prefs ? prefs.normalizeMediaPath(src) : '';
+        const data_saver = prefs ? prefs.playbackKbps() <= 64 : false;
+        if (mse && mse.is_supported() && data_saver && local_path && /\.webm$/i.test(local_path)) {
+            mse.play_media(src, hub.audio, () => this._play_native_source(src), on_complete);
+            return true;
+        }
+        this._play_native_source(src);
+        return false;
+    }
+
+    _play_native_source(src) {
+        const hub = this.state.hub;
+        if (window.SpolocalMse) window.SpolocalMse.stop();
+        const audioSrc = this._data_saver_audio_src(src);
+        hub.audio.src = audioSrc;
+        this._apply_preload_for_src(audioSrc);
+    }
+
+    _apply_preload_for_src(src) {
+        const hub = this.state.hub;
+        if (!hub.audio) return;
+        const prefs = window.SpolocalQualityPrefs;
+        const is_local = prefs ? !!prefs.normalizeMediaPath(src) : false;
+        const data_saver = prefs ? prefs.playbackKbps() <= 64 : false;
+        // Data Saver: don't prefetch the whole local file - let the browser fetch
+        // byte-range slices as the playhead advances (saves data/battery).
+        hub.audio.preload = (data_saver && is_local) ? 'metadata' : 'auto';
+    }
+
     advance_search_stream() {
         const hub = this.state.hub;
         if (!hub || !hub.audio) return;
@@ -835,13 +885,15 @@ export class PlaylistTransportController {
             hub.audio.play().catch(() => {});
             return;
         }
-        const table = document.getElementById('song-mix-table');
-        if (!table) {
-            this.setPlayUi(false);
-            return;
-        }
         const current_vid = String((hub.searchStreamHit && hub.searchStreamHit.video_id) || '').trim();
-        const rows = Array.from(table.querySelectorAll('tr.track-row[data-youtube-video-id]'));
+        // Collect stream rows from the song-mix table and the playlist recommendations table.
+        const rows = [];
+        const collect = (table) => {
+            if (!table) return;
+            table.querySelectorAll('tr.track-row[data-youtube-video-id]').forEach((r) => rows.push(r));
+        };
+        collect(document.getElementById('song-mix-table'));
+        collect(document.getElementById('playlist-recommendations-table'));
         if (!rows.length) {
             this.setPlayUi(false);
             return;
@@ -1069,16 +1121,18 @@ export class PlaylistTransportController {
             youtube_video_id: (t.youtube_video_id || '').trim(),
             source_playlist_id: sourcePidFinal,
         };
-        hub.audio.src = playSrc;
+        const mse_handled = this._attach_playback_source(playSrc, () => this.playAtDelta(1));
         hub.titleEl.textContent = t.title;
         hub.subEl.textContent = t.artist;
         void this.quality.apply_track_loudness(t, sourcePidFinal);
         if (this.lyrics) this.lyrics.loadCover(trackId);
         this.updatePlayingRow();
-        try {
-            hub.audio.play().catch(err => this.handlePlayError(err));
-        } catch (e) {
-            this.handlePlayError(e);
+        if (!mse_handled) {
+            try {
+                hub.audio.play().catch(err => this.handlePlayError(err));
+            } catch (e) {
+                this.handlePlayError(e);
+            }
         }
         if (hub.lyricsVisible && this.lyrics) this.lyrics.fetchLyrics(true);
         this.mediaSession.updateMediaSessionMetadata(t);
@@ -1113,6 +1167,7 @@ export class PlaylistTransportController {
     scheduleStallRecoveryIfStillHung() {
         const hub = this.state.hub;
         if (this.isSearchStreamPlayback() || this.isStreamingPlayback()) return;
+        if (window.SpolocalMse && window.SpolocalMse.is_active()) return;
         if (this.stallRecoveryTimer) clearTimeout(this.stallRecoveryTimer);
         this.stallRecoveryTimer = setTimeout(() => {
             this.stallRecoveryTimer = null;

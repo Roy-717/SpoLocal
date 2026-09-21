@@ -65,15 +65,15 @@ def variant_key(kbps: int) -> str:
 def ytdlp_audio_format(kbps: int | None = None) -> str:
     """Audio-only DASH. Never fall back to muxed video (often ~44 kbps AAC).
 
-    YouTube serves two Opus tiers: ~50 kbps (itag 249) and ~130 kbps (itag 251).
-    Data Saver takes the low one, Highest the medium one.
+    Data Saver takes the low Opus tier (~50 kbps, itag 249) as WebM so playback
+    can slice it through Media Source Extensions; Highest the ~130 kbps Opus tier.
     """
     if kbps is not None and snap_kbps(kbps) <= QUALITY_LOW_KBPS:
         return (
-            "bestaudio[acodec^=opus][abr<=80]/"
-            "bestaudio[abr<=80]/"
-            "bestaudio[acodec^=opus]/"
-            "bestaudio"
+            "bestaudio[ext=webm][acodec^=opus][abr<=80]/"
+            "bestaudio[ext=webm][abr<=80]/"
+            "bestaudio[ext=webm]/"
+            "bestaudio[acodec^=opus]"
         )
     return (
         "bestaudio[acodec^=opus][abr>=96]/"
@@ -94,17 +94,21 @@ def ytdlp_audio_postprocessor() -> dict:
 
 def ytdlp_extract_audio_opts(kbps: int) -> dict[str, Any]:
     q = snap_kbps(kbps)
-    return {
-        "format": ytdlp_audio_format(q),
-        "postprocessors": [ytdlp_audio_postprocessor()],
-    }
+    opts: dict[str, Any] = {"format": ytdlp_audio_format(q)}
+    if q > QUALITY_LOW_KBPS:
+        opts["postprocessors"] = [ytdlp_audio_postprocessor()]
+    else:
+        # Data Saver: keep YouTube's WebM/Opus container untouched. Ogg/Opus is
+        # not decodable by Media Source Extensions, but WebM/Opus is.
+        opts["postprocessors"] = []
+    return opts
 
 
 def quality_file_stem(base_stem: str, kbps: int) -> str:
     return f"{base_stem}__{variant_key(kbps)}k"
 
 
-_RE_KBPS_SUFFIX = re.compile(r"__(\d+)k\.(?:mp3|m4a|opus)$", re.I)
+_RE_KBPS_SUFFIX = re.compile(r"__(\d+)k\.(?:mp3|m4a|opus|webm)$", re.I)
 
 
 def kbps_from_relpath(relpath: str | None) -> int | None:

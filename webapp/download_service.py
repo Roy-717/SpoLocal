@@ -44,7 +44,8 @@ _HYDRATION_CACHE_TTL_SECONDS = 30  # Cache hydration results for 30 seconds
 _HYDRATION_CACHE_MAX_ENTRIES = 100
 
 # Audio file extensions SpoLocal can produce or still find on disk.
-AUDIO_EXTS = (".opus", ".mp3", ".m4a", ".flac")
+# ``.webm`` is the Data Saver container (MSE-decodable WebM/Opus).
+AUDIO_EXTS = (".opus", ".mp3", ".m4a", ".flac", ".webm")
 
 
 def _now_ts() -> float:

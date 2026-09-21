@@ -439,11 +439,10 @@ class AppShellController {
         }
     }
 
-    async prepare_stream_url(vid, btn) {
+    async prepare_stream_url(vid) {
         try {
             await fetch('/api/stream/prepare?vid=' + encodeURIComponent(vid));
         } catch (e) {}
-        this.set_row_loading(btn, false);
     }
 
     playPreview(hit, btn) {
@@ -496,6 +495,13 @@ class AppShellController {
                 if (hub.lyricsController) hub.lyricsController.load_youtube_cover(vid);
                 if (hub.queueVisible && hub.queue) hub.queue.render_queue_list();
                 if (hub.lyricsVisible && hub.lyricsController) hub.lyricsController.fetchLyrics(true);
+                // Once playback actually starts, swap the loading spinner for the pause icon.
+                if (btn && btn.classList.contains('track-play--row')) {
+                    delete btn.dataset.loading;
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-pause text-[10px]"></i>';
+                    btn.classList.add('ring-2', 'ring-white', 'scale-105');
+                }
             };
             const on_mse_end = () => {
                 if (typeof hub.onMseStreamEnded === 'function') hub.onMseStreamEnded();
@@ -520,7 +526,7 @@ class AppShellController {
             };
             if (btn && btn.classList.contains('track-play--row')) {
                 this.set_row_loading(btn, true);
-                void this.prepare_stream_url(vid, btn).then(start_play);
+                void this.prepare_stream_url(vid).then(start_play);
             } else {
                 start_play();
             }

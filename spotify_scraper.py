@@ -88,7 +88,7 @@ def youtube_video_id_from_ytdlp_info(info: object) -> str | None:
 def _existing_file(path: Path) -> Path | None:
     if path.is_file():
         return path
-    for ext in (".opus", ".mp3", ".m4a"):
+    for ext in (".opus", ".mp3", ".m4a", ".webm"):
         alt = path.with_suffix(ext)
         if alt.is_file():
             return alt
@@ -460,6 +460,7 @@ class SpotifyEmbedDownloader:
         Falls back to regular YouTube search if YT Music fails.
         """
         from webapp.audio_quality import (
+            QUALITY_LOW_KBPS,
             parse_quality_kbps,
             quality_file_stem,
             ytdlp_extract_audio_opts,
@@ -471,7 +472,9 @@ class SpotifyEmbedDownloader:
         safe = sanitize_filename(f"{artist} - {title}", restricted=False)
         stem = quality_file_stem(safe, kbps)
         outtmpl = str(out_dir / f"{stem}.%(ext)s")
-        expected = out_dir / f"{stem}.opus"
+        # Data Saver keeps YouTube's WebM/Opus container (MSE-decodable); Highest
+        # remuxes to Ogg Opus.
+        expected = out_dir / f"{stem}.{'webm' if kbps <= QUALITY_LOW_KBPS else 'opus'}"
 
         for provider in ("ytsearch1", "ytmsearch1"):
             query = f"{provider}:{artist} - {title}"
@@ -525,6 +528,11 @@ class SpotifyEmbedDownloader:
                         cover_data = resp.read()
                 except Exception:
                     cover_data = None
+
+            if path.suffix.lower() == ".webm":
+                # Matroska/WebM tags are not writable with mutagen; covers fall
+                # back to the YouTube thumbnail for Data Saver files.
+                return
 
             if path.suffix.lower() == ".opus":
                 from mutagen.oggopus import OggOpus

@@ -840,6 +840,11 @@ class AppShellController {
         const tr = document.createElement('tr');
         tr.className = 'track-row border-b border-[#282828]' + (vid ? ' track-row--playable' : '');
         if (vid) tr.setAttribute('data-youtube-video-id', vid);
+        const libMatches = Array.isArray(hit.library_matches) ? hit.library_matches : [];
+        if (libMatches.length) {
+            const firstTrackId = String(libMatches[0].track_id || '');
+            if (firstTrackId) tr.setAttribute('data-track-id', firstTrackId);
+        }
         tr.setAttribute('data-title', (hit && hit.title) ? String(hit.title) : '');
         tr.setAttribute('data-artist', (hit && (hit.artist || hit.channel)) ? String(hit.artist || hit.channel) : '');
 

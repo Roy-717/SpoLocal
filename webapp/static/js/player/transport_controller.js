@@ -153,6 +153,7 @@ export class PlaylistTransportController {
         });
 
         hub.audio.addEventListener('stalled', () => this.scheduleStallRecoveryIfStillHung());
+        hub.audio.addEventListener('waiting', () => this.scheduleStallRecoveryIfStillHung());
 
         document.addEventListener('visibilitychange', () => this.handleVisibilityForBackgroundPlayback());
         window.addEventListener('pageshow', (ev) => {
@@ -593,13 +594,8 @@ export class PlaylistTransportController {
     playAtDelta(delta) {
         const hub = this.state.hub;
         try { console.debug('[Playlist] playAtDelta', { delta: delta, current: hub.currentTrackId }); } catch (e) {}
-        if (this.isSearchStreamPlayback()) {
-            if (delta < 0 && hub.audio) {
-                try { hub.audio.currentTime = 0; } catch (e) {}
-                hub.audio.play().catch(err => this.handlePlayError(err));
-            } else {
-                this.setPlayUi(false);
-            }
+        if (this.isSearchStreamPlayback() || this.current_is_rec_or_mix_row()) {
+            this.skip_rec_or_mix_row(delta);
             return;
         }
         if (hub.randomMode && this.library_pool_playable().length) {
@@ -781,8 +777,10 @@ export class PlaylistTransportController {
     updatePlayingRow() {
         document.querySelectorAll('tr.track-row-playing').forEach(r => r.classList.remove('track-row-playing'));
         const hub = this.state.hub;
-        let row = hub.currentTrackId ? this.rowForTrack(hub.currentTrackId) : null;
-        if (!row && hub.searchStreamActive) {
+        let row = null;
+        // A live search stream is what is actually playing, so it wins over a
+        // stale hub.currentTrackId left over from a previously played library track.
+        if (hub.searchStreamActive) {
             const vid = String(
                 (hub.searchStreamHit && hub.searchStreamHit.video_id)
                 || this.stream_vid_from_src(hub.audio && (hub.audio.currentSrc || hub.audio.src))
@@ -794,6 +792,7 @@ export class PlaylistTransportController {
                 );
             }
         }
+        if (!row && hub.currentTrackId) row = this.rowForTrack(hub.currentTrackId);
         if (row) row.classList.add('track-row-playing');
     }
 
@@ -877,16 +876,7 @@ export class PlaylistTransportController {
         hub.audio.preload = (data_saver && is_local) ? 'metadata' : 'auto';
     }
 
-    advance_search_stream() {
-        const hub = this.state.hub;
-        if (!hub || !hub.audio) return;
-        if (hub.repeatMode === 'one' && hub.searchStreamHit) {
-            hub.audio.currentTime = 0;
-            hub.audio.play().catch(() => {});
-            return;
-        }
-        const current_vid = String((hub.searchStreamHit && hub.searchStreamHit.video_id) || '').trim();
-        // Collect stream rows from the song-mix table and the playlist recommendations table.
+    rec_or_mix_rows() {
         const rows = [];
         const collect = (table) => {
             if (!table) return;
@@ -894,40 +884,88 @@ export class PlaylistTransportController {
         };
         collect(document.getElementById('song-mix-table'));
         collect(document.getElementById('playlist-recommendations-table'));
+        return rows;
+    }
+
+    rec_or_mix_row_index(rows) {
+        const hub = this.state.hub;
+        const current_vid = String(
+            (hub.searchStreamHit && hub.searchStreamHit.video_id)
+            || this.stream_vid_from_src(hub.audio && (hub.audio.currentSrc || hub.audio.src))
+            || ''
+        ).trim();
+        const current_tid = String((hub && hub.currentTrackId) || '').trim();
+        return rows.findIndex((r) => {
+            if (current_vid && r.getAttribute('data-youtube-video-id') === current_vid) return true;
+            if (current_tid && r.getAttribute('data-track-id') === current_tid) return true;
+            return false;
+        });
+    }
+
+    current_is_rec_or_mix_row() {
+        return this.rec_or_mix_row_index(this.rec_or_mix_rows()) >= 0;
+    }
+
+    play_rec_or_mix_row(row) {
+        if (!row) return false;
+        const vid = String(row.getAttribute('data-youtube-video-id') || '').trim();
+        const hit = {
+            video_id: vid,
+            title: row.getAttribute('data-title') || '',
+            artist: row.getAttribute('data-artist') || '',
+            channel: row.getAttribute('data-artist') || '',
+        };
+        const btn = row.querySelector('.track-play');
+        if (typeof window.playPreview === 'function') {
+            window.playPreview(hit, btn);
+            return true;
+        }
+        this.setPlayUi(false);
+        return false;
+    }
+
+    skip_rec_or_mix_row(delta) {
+        const hub = this.state.hub;
+        if (!hub || !hub.audio) return false;
+        const rows = this.rec_or_mix_rows();
         if (!rows.length) {
             this.setPlayUi(false);
-            return;
+            return false;
+        }
+        const idx = this.rec_or_mix_row_index(rows);
+        if (hub.repeatMode === 'one' && idx >= 0) {
+            hub.audio.currentTime = 0;
+            hub.audio.play().catch(() => {});
+            return true;
         }
         let next_row = null;
+        const n = rows.length;
         if (hub.shuffleOn) {
-            next_row = rows[Math.floor(Math.random() * rows.length)];
+            next_row = rows[Math.floor(Math.random() * n)];
+        } else if (idx < 0) {
+            next_row = delta > 0 ? rows[0] : rows[n - 1];
         } else {
-            const idx = rows.findIndex((r) => r.getAttribute('data-youtube-video-id') === current_vid);
-            if (idx < 0) {
-                next_row = rows[0];
-            } else if (idx + 1 < rows.length) {
-                next_row = rows[idx + 1];
-            } else if (hub.repeatMode === 'all') {
-                next_row = rows[0];
+            let next_idx = idx + delta;
+            if (hub.repeatMode === 'all') {
+                next_idx = ((next_idx % n) + n) % n;
+                next_row = rows[next_idx];
+            } else if (next_idx >= 0 && next_idx < n) {
+                next_row = rows[next_idx];
+            } else if (delta < 0 && idx === 0) {
+                hub.audio.currentTime = 0;
+                hub.audio.play().catch((err) => this.handlePlayError(err));
+                return true;
             }
         }
         if (!next_row) {
             this.setPlayUi(false);
-            return;
+            return false;
         }
-        const vid = String(next_row.getAttribute('data-youtube-video-id') || '').trim();
-        const hit = {
-            video_id: vid,
-            title: next_row.getAttribute('data-title') || '',
-            artist: next_row.getAttribute('data-artist') || '',
-            channel: next_row.getAttribute('data-artist') || '',
-        };
-        const btn = next_row.querySelector('.track-play');
-        if (typeof window.playPreview === 'function') {
-            window.playPreview(hit, btn);
-        } else {
-            this.setPlayUi(false);
-        }
+        return this.play_rec_or_mix_row(next_row);
+    }
+
+    advance_search_stream() {
+        this.skip_rec_or_mix_row(1);
     }
 
     isStreamingPlayback() {
@@ -950,10 +988,15 @@ export class PlaylistTransportController {
 
     setPlayUi(playing) {
         const hub = this.state.hub;
-        document.querySelectorAll('.track-play i').forEach(icon => {
+        document.querySelectorAll('.track-play:not([data-loading]) i').forEach(icon => {
             icon.classList.remove('fa-pause');
             icon.classList.remove('pl-0.5');
             icon.classList.add('fa-play', 'pl-0.5');
+        });
+        // Clear the now-playing ring from every row button; it is re-applied
+        // below to the single row that is actually playing.
+        document.querySelectorAll('.track-play--row').forEach(btn => {
+            btn.classList.remove('ring-2', 'ring-white', 'scale-105');
         });
 
         const headerPlayIcon = this.get_header_play_icon();
@@ -974,20 +1017,17 @@ export class PlaylistTransportController {
             hub.iconMainPlay.classList.remove('fa-pause');
             hub.iconMainPlay.classList.add('fa-play', 'pl-0.5', 'sm:pl-1');
         }
-        if (playing && hub.currentTrackId) {
-            const r = this.rowForTrack(hub.currentTrackId);
-            const icon = r && r.querySelector('.track-play i');
-            if (icon) {
-                icon.classList.remove('fa-play', 'pl-0.5');
-                icon.classList.add('fa-pause', 'pl-0.5');
-            }
-        }
         this.updatePlayingRow();
-        if (playing) {
-            const rec_icon = document.querySelector('tr.track-row-playing .track-play i');
-            if (rec_icon) {
-                rec_icon.classList.remove('fa-play', 'fa-stop', 'pl-0.5');
-                rec_icon.classList.add('fa-pause', 'pl-0.5');
+        const playing_row = document.querySelector('tr.track-row-playing');
+        const playing_btn = playing_row && playing_row.querySelector('.track-play');
+        if (playing_btn) {
+            playing_btn.classList.add('ring-2', 'ring-white', 'scale-105');
+            if (playing) {
+                const icon = playing_btn.querySelector('i');
+                if (icon && !playing_btn.dataset.loading) {
+                    icon.classList.remove('fa-play', 'fa-stop', 'pl-0.5');
+                    icon.classList.add('fa-pause', 'pl-0.5');
+                }
             }
         }
         const streamBadge = hub.streamBadgeEl;
@@ -1166,17 +1206,22 @@ export class PlaylistTransportController {
 
     scheduleStallRecoveryIfStillHung() {
         const hub = this.state.hub;
-        if (this.isSearchStreamPlayback() || this.isStreamingPlayback()) return;
-        if (window.SpolocalMse && window.SpolocalMse.is_active()) return;
         if (this.stallRecoveryTimer) clearTimeout(this.stallRecoveryTimer);
+        const mse = window.SpolocalMse;
+        const mse_on = !!(mse && mse.is_active());
         this.stallRecoveryTimer = setTimeout(() => {
             this.stallRecoveryTimer = null;
             if (!hub.audio || hub.audio.paused || hub.audio.ended) return;
             if (hub.audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return;
+            if (mse && mse.is_active()) {
+                mse.nudge();
+                return;
+            }
+            if (this.isSearchStreamPlayback() || this.isStreamingPlayback()) return;
             if (!this.quality.resolveCurrentPlaySrc()) return;
             hub._mediaDecodeRetries = Math.max(hub._mediaDecodeRetries || 0, 1);
             this.quality.trySoftReloadCurrentAudioSource();
-        }, 6500);
+        }, mse_on ? 1800 : 6500);
     }
 
     handleVisibilityForBackgroundPlayback() {

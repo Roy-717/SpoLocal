@@ -1,4 +1,4 @@
-import { PlaylistTransportController } from '../player/transport_controller.js?v=101';
+import { PlaylistTransportController } from '../player/transport_controller.js?v=103';
 import { PlaylistLikeController } from '../player/like_controller.js?v=1';
 import { PlaylistShuffleController } from '../player/shuffle_controller.js?v=1';
 import { PlaylistMediaSessionController } from '../player/media_session_controller.js?v=1';

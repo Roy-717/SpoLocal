@@ -26,6 +26,7 @@ export class MseStreamController {
         this._ignore_native_seek = false;
         this._on_seek_bound = null;
         this._on_time_bound = null;
+        this._on_waiting_bound = null;
         this._on_complete = null;
         this._on_seek_done = null;
         this._started = false;
@@ -225,10 +226,17 @@ export class MseStreamController {
         });
 
         this._on_time_bound = () => {
+            this._snap_playhead_into_buffer();
             this._maybe_fetch_next(gen);
             this._check_natural_end();
         };
+        this._on_waiting_bound = () => {
+            this._snap_playhead_into_buffer();
+            this._maybe_fetch_next(gen);
+        };
         this._audio.addEventListener('timeupdate', this._on_time_bound);
+        this._audio.addEventListener('waiting', this._on_waiting_bound);
+        this._audio.addEventListener('stalled', this._on_waiting_bound);
     }
 
     _cluster_index(buf) {
@@ -437,9 +445,11 @@ export class MseStreamController {
             this._on_seek_data(gen);
             if (this._seeking) return;
         } else if (!this._started && this._audio && this._audio.buffered.length) {
+            this._snap_playhead_into_buffer();
             this._play_if_needed();
         }
         this._evict_old();
+        this._snap_playhead_into_buffer();
         this._maybe_fetch_next(gen);
         this._check_natural_end();
     }
@@ -449,6 +459,27 @@ export class MseStreamController {
         if (!audio) return;
         this._started = true;
         if (audio.paused) audio.play().catch(() => {});
+    }
+
+    _snap_playhead_into_buffer() {
+        const audio = this._audio;
+        if (!audio || this._seeking || !audio.buffered.length) return;
+        if (this._is_buffered(audio.currentTime)) return;
+        const t = audio.currentTime;
+        for (let i = 0; i < audio.buffered.length; i++) {
+            const s = audio.buffered.start(i);
+            if (s > t && s - t <= 2) {
+                this._set_playhead(s);
+                this._play_if_needed();
+                return;
+            }
+        }
+    }
+
+    nudge() {
+        if (!this.is_active()) return;
+        this._snap_playhead_into_buffer();
+        this._maybe_fetch_next(this._gen);
     }
 
     _check_natural_end() {
@@ -476,10 +507,8 @@ export class MseStreamController {
         if (this._seeking && this._is_buffered(this._seek_target)) return;
         if (this._seeking && this._seek_slices >= this.MAX_SEEK_SLICES) return;
 
+        if (!this._seeking) this._snap_playhead_into_buffer();
         if (!this._seeking && this._buffered_ahead() > this.BUFFER_AHEAD_SEC) return;
-        if (!this._seeking && this._audio && this._audio.buffered.length && !this._is_buffered(this._audio.currentTime)) {
-            return;
-        }
 
         if (this._total && this._pos >= this._total && !this._need_init) {
             this._file_complete = true;
@@ -498,9 +527,27 @@ export class MseStreamController {
             const url = this._mode === 'media'
                 ? this._src_url
                 : '/api/stream?vid=' + encodeURIComponent(this._vid);
-            const r = await fetch(url, {
-                headers: { Range: 'bytes=' + start + '-' + end },
-            });
+            const ac = new AbortController();
+            this._fetch_ac = ac;
+            const timer = setTimeout(() => ac.abort(), 20000);
+            let r;
+            try {
+                r = await fetch(url, {
+                    headers: { Range: 'bytes=' + start + '-' + end },
+                    signal: ac.signal,
+                });
+            } finally {
+                clearTimeout(timer);
+            }
+            if (gen !== this._gen || op !== this._op) return;
+            if (!r.ok) {
+                if (this._mode === 'stream' && r.status >= 400) {
+                    const fresh_url = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'fresh=1';
+                    r = await fetch(fresh_url, {
+                        headers: { Range: 'bytes=' + start + '-' + end },
+                    });
+                }
+            }
             if (gen !== this._gen || op !== this._op) return;
             if (!r.ok) {
                 if (this._seeking) this._finish_seek();
@@ -516,27 +563,34 @@ export class MseStreamController {
                 return;
             }
             const cr = r.headers.get('content-range') || '';
-            const m = /\/(\d+)\s*$/.exec(cr);
-            if (m) this._total = parseInt(m[1], 10);
+            const total_m = /\/(\d+)\s*$/.exec(cr);
+            if (total_m) this._total = parseInt(total_m[1], 10);
+            const next_pos = start + buf.byteLength;
             if (init) {
                 if (this._jump_seek) buf = this._trim_init(buf);
                 this._need_init = false;
-                this._pos = this._jump_seek ? this._resume_pos : buf.byteLength;
+                this._pos = this._jump_seek ? this._resume_pos : next_pos;
             } else {
                 if (this._jump_seek) buf = this._trim_cluster(buf);
                 if (this._seeking) this._seek_slices += 1;
-                this._pos = start + this.SLICE;
+                this._pos = next_pos;
             }
             if (this._sb && !this._sb.updating && buf.byteLength) {
                 try {
                     this._sb.appendBuffer(buf);
                 } catch (e) {
                     this._evict_old();
-                    if (this._seeking) this._finish_seek();
+                    try {
+                        this._sb.appendBuffer(buf);
+                    } catch (e2) {
+                        this._pos = start;
+                        if (this._seeking) this._finish_seek();
+                    }
                 }
             }
         } catch (e) {
             if (gen !== this._gen) return;
+            if (e && e.name === 'AbortError') return;
             if (this._seeking) this._finish_seek();
             else this._fallback();
         } finally {
@@ -566,12 +620,21 @@ export class MseStreamController {
         this._need_init = true;
         this._jump_seek = false;
         this._started = false;
+        if (this._fetch_ac) {
+            try { this._fetch_ac.abort(); } catch (e) {}
+            this._fetch_ac = null;
+        }
         if (this._audio) {
             if (this._on_seek_bound) this._audio.removeEventListener('seeking', this._on_seek_bound);
             if (this._on_time_bound) this._audio.removeEventListener('timeupdate', this._on_time_bound);
+            if (this._on_waiting_bound) {
+                this._audio.removeEventListener('waiting', this._on_waiting_bound);
+                this._audio.removeEventListener('stalled', this._on_waiting_bound);
+            }
         }
         this._on_seek_bound = null;
         this._on_time_bound = null;
+        this._on_waiting_bound = null;
         if (this._sb) {
             try { this._sb.abort(); } catch (e) {}
             this._sb = null;

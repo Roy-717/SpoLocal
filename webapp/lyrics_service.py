@@ -40,21 +40,22 @@ class LyricsService:
         if not pl or not pl.get_track(tid):
             return {"lyrics": "", "source": "none", "has_audio": False, "lrc_data": None, "lrc_raw": None}
         path = self.download.get_track_audio_path(playlist_id, track_id)
-        if not path:
-            return {"lyrics": "", "source": "none", "has_audio": False, "lrc_data": None, "lrc_raw": None}
-        side = read_sidecar_lyrics(path)
-        if side:
-            result = {"lyrics": side[0], "source": side[1], "has_audio": True, "lrc_data": None, "lrc_raw": None}
-            # Include parsed LRC data and raw content for synced lyrics
-            if side[1] == "lrc":
-                raw_lrc = read_raw_lrc(path)
-                if raw_lrc:
-                    result["lrc_data"] = parse_lrc_lines(raw_lrc)
-                    result["lrc_raw"] = raw_lrc
-            return result
-        emb = extract_lyrics(path)
-        if emb and emb.strip():
-            return {"lyrics": emb.strip(), "source": "embedded", "has_audio": True, "lrc_data": None, "lrc_raw": None}
+        # Check for existing lyrics first — a saved track should be editable
+        # even if the audio file hasn't been downloaded yet.
+        if path:
+            side = read_sidecar_lyrics(path)
+            if side:
+                result = {"lyrics": side[0], "source": side[1], "has_audio": True, "lrc_data": None, "lrc_raw": None}
+                # Include parsed LRC data and raw content for synced lyrics
+                if side[1] == "lrc":
+                    raw_lrc = read_raw_lrc(path)
+                    if raw_lrc:
+                        result["lrc_data"] = parse_lrc_lines(raw_lrc)
+                        result["lrc_raw"] = raw_lrc
+                return result
+            emb = extract_lyrics(path)
+            if emb and emb.strip():
+                return {"lyrics": emb.strip(), "source": "embedded", "has_audio": True, "lrc_data": None, "lrc_raw": None}
         track = pl.get_track(tid)
         if track and on_demand_lyrics_fetch_enabled():
             plain, synced = fetch_lrclib_sidecar_sync(track.artist, track.title, force=True)

@@ -376,6 +376,11 @@ export class PlaylistDownloadController {
                 if (this.session.transport) {
                     this.session.transport.quality.onPlaybackQualityChanged();
                 }
+                // A download that just finished may be the track currently playing;
+                // lyrics fetched before it completed show "download to enable saving".
+                if (this.session.lyrics && hub.currentTrackId && !hub.lastLyricsPayload.has_audio) {
+                    this.session.lyrics.fetchLyrics(true);
+                }
             }
         } catch (e) {
         } finally {

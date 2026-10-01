@@ -145,6 +145,7 @@ def _playlist_from_dict(pdata: dict) -> Playlist:
         spotify_catalog_key=data.get("spotify_catalog_key"),
         spotify_snapshot_id=data.get("spotify_snapshot_id"),
         bio=data.get("bio"),
+        owner_id=data.get("owner_id"),
     )
 
 
@@ -212,7 +213,6 @@ class DownloadService:
         self._load_playlists()
         self._sync_from_download_folders()
         self._reset_interrupted_downloads()
-        self._ensure_liked_songs_playlist()
 
         set_track_status_change_listener(self._invalidate_error_rows_cache)
 
@@ -279,6 +279,7 @@ class DownloadService:
                     "id": pl.id,
                     "name": pl.name,
                     "bio": pl.bio,
+                    "owner_id": pl.owner_id,
                     "created_at": pl.created_at.isoformat(),
                     "spotify_catalog_key": pl.spotify_catalog_key,
                     "spotify_snapshot_id": pl.spotify_snapshot_id,
@@ -340,16 +341,25 @@ class DownloadService:
     def is_liked_songs_playlist(self, playlist_id: Optional[str]) -> bool:
         if not playlist_id:
             return False
-        return str(playlist_id).strip() == self.LIKED_SONGS_PLAYLIST_ID
+        key = str(playlist_id).strip()
+        return key == self.LIKED_SONGS_PLAYLIST_ID or key.startswith(self.LIKED_SONGS_PLAYLIST_ID + "_")
 
-    def _ensure_liked_songs_playlist(self) -> None:
-        pid = self.LIKED_SONGS_PLAYLIST_ID
+    def liked_songs_id_for(self, owner_id: Optional[str]) -> Optional[str]:
+        """Per-user Liked Songs playlist id, or None for guests."""
+        if not owner_id:
+            return None
+        return f"{self.LIKED_SONGS_PLAYLIST_ID}_{owner_id}"
+
+    def _ensure_liked_songs_playlist(self, owner_id: Optional[str]) -> Optional[Playlist]:
+        pid = self.liked_songs_id_for(owner_id)
+        if not pid:
+            return None
         if pid in self.playlists:
             pl = self.playlists[pid]
             if pl.name != self.LIKED_SONGS_PLAYLIST_NAME:
                 pl.name = self.LIKED_SONGS_PLAYLIST_NAME
                 self._save_playlists()
-            return
+            return pl
         pl = Playlist(
             id=pid,
             name=self.LIKED_SONGS_PLAYLIST_NAME,
@@ -358,14 +368,37 @@ class DownloadService:
             spotify_catalog_key=None,
             spotify_snapshot_id=None,
             bio=None,
+            owner_id=owner_id,
         )
         self.playlists[pid] = pl
         self._save_playlists()
+        return pl
 
-    def list_liked_entry_keys(self) -> List[str]:
+    def claim_ownerless_playlists(self, owner_id: Optional[str]) -> int:
+        """Give all unclaimed playlists to the first user who logs in (option A migration).
+        The legacy global Liked Songs list becomes that user's Liked Songs."""
+        if not owner_id:
+            return 0
+        changed = 0
+        legacy = self.playlists.get(self.LIKED_SONGS_PLAYLIST_ID)
+        if legacy is not None and not legacy.owner_id:
+            new_pid = self.liked_songs_id_for(owner_id)
+            self.playlists.pop(self.LIKED_SONGS_PLAYLIST_ID, None)
+            legacy.id = new_pid
+            self.playlists[new_pid] = legacy
+            legacy.owner_id = owner_id
+            changed += 1
+        for pl in self.playlists.values():
+            if not pl.owner_id:
+                pl.owner_id = owner_id
+                changed += 1
+        if changed:
+            self._save_playlists()
+        return changed
+
+    def list_liked_entry_keys(self, owner_id: Optional[str] = None) -> List[str]:
         """Stable keys ``source_playlist_id|source_track_id`` for tracks saved to Liked Songs."""
-        self._ensure_liked_songs_playlist()
-        liked_pl = self.playlists.get(self.LIKED_SONGS_PLAYLIST_ID)
+        liked_pl = self._ensure_liked_songs_playlist(owner_id)
         if not liked_pl:
             return []
         keys: List[str] = []
@@ -376,14 +409,13 @@ class DownloadService:
                 keys.append(f"{sp}|{st}")
         return keys
 
-    def set_track_liked(self, source_playlist_id: str, source_track_id: str, liked: bool) -> bool:
+    def set_track_liked(self, source_playlist_id: str, source_track_id: str, liked: bool, owner_id: Optional[str] = None) -> bool:
         """Add/remove a playable track in the Liked Songs playlist (by source list + track id)."""
         spid = source_playlist_id.strip()
         stid = source_track_id.strip()
         if not spid or not stid:
             return False
-        self._ensure_liked_songs_playlist()
-        liked_pl = self.playlists.get(self.LIKED_SONGS_PLAYLIST_ID)
+        liked_pl = self._ensure_liked_songs_playlist(owner_id)
         if not liked_pl:
             return False
 
@@ -497,6 +529,15 @@ class DownloadService:
                 return t
         return None
 
+    def _settle_supplementary_status(self, pl: Playlist, track: Track, track_id: str) -> None:
+        """A failed supplementary job must not strand a track as queued/downloading."""
+        if track.status not in (DownloadStatus.queued, DownloadStatus.downloading):
+            return
+        if self._track_has_resolved_file(track):
+            pl.update_track_status(track_id, DownloadStatus.done)
+        else:
+            pl.update_track_status(track_id, DownloadStatus.error, "Download did not produce a file.")
+
     def _clear_stale_variant(self, track: Track, quality: str) -> None:
         """Drop a variant entry when its file is missing on disk."""
         qk = variant_key(parse_quality_kbps(quality))
@@ -586,11 +627,12 @@ class DownloadService:
                 return False
         return False
 
-    def create_playlist(self, name: str) -> Playlist:
+    def create_playlist(self, name: str, owner_id: Optional[str] = None) -> Playlist:
         n = (name or "").strip()
         if n == self.LIKED_SONGS_PLAYLIST_NAME:
             raise ValueError("That name is reserved for the built-in Liked Songs playlist.")
         pl = Playlist.create(name)
+        pl.owner_id = owner_id or None
         self.playlists[pl.id] = pl
         self._save_playlists()
         return pl
@@ -609,6 +651,15 @@ class DownloadService:
             if k.lower() == key_lower:
                 return pl
         return None
+
+    def get_playlist_for_user(self, playlist_id: str, owner_id: Optional[str]) -> Optional[Playlist]:
+        """Ownership-scoped lookup. Guests (owner_id None) see nothing."""
+        if not owner_id:
+            return None
+        pl = self.get_playlist(playlist_id)
+        if pl is None or pl.owner_id != owner_id:
+            return None
+        return pl
 
     def _liked_source_track(self, track: Track) -> Optional[Track]:
         spid = (track.liked_source_playlist_id or "").strip()
@@ -855,13 +906,10 @@ class DownloadService:
         root_dl = (self.root / "downloads").resolve()
         return newest.resolve().relative_to(root_dl).as_posix()
 
-    def list_playlist_catalog(self) -> List[dict]:
+    def list_playlist_catalog(self, owner_id: Optional[str] = None) -> List[dict]:
         """Lightweight list for /api/playlists/catalog (Add to playlist, etc.)."""
         rows: List[dict] = []
-        for pl in sorted(
-            self.playlists.values(),
-            key=lambda p: (0 if p.id == self.LIKED_SONGS_PLAYLIST_ID else 1, (p.name or "").lower()),
-        ):
+        for pl in self.list_playlists_for_user(owner_id):
             tiles = [f"/playlists/{pl.id}/tracks/{t.id}/cover" for t in pl.tracks[:4]]
             rows.append(
                 {
@@ -874,14 +922,11 @@ class DownloadService:
             )
         return rows
 
-    def list_playlist_nav(self, current_id: Optional[str]) -> List[dict]:
+    def list_playlist_nav(self, current_id: Optional[str], owner_id: Optional[str] = None) -> List[dict]:
         """Sidebar rows: id, name, cover_tiles, active (avoids passing full playlist objects to the template)."""
         cur = (current_id or "").strip()
         rows: List[dict] = []
-        for pl in sorted(
-            self.playlists.values(),
-            key=lambda p: (0 if p.id == self.LIKED_SONGS_PLAYLIST_ID else 1, (p.name or "").lower()),
-        ):
+        for pl in self.list_playlists_for_user(owner_id):
             tiles = [f"/playlists/{pl.id}/tracks/{t.id}/cover" for t in pl.tracks[:4]]
             rows.append(
                 {
@@ -983,18 +1028,24 @@ class DownloadService:
             key=lambda p: (0 if p.id == self.LIKED_SONGS_PLAYLIST_ID else 1, (p.name or "").lower()),
         )
 
+    def list_playlists_for_user(self, owner_id: Optional[str]) -> List[Playlist]:
+        """Only the user's own playlists; guests get an empty library."""
+        if not owner_id:
+            return []
+        return [pl for pl in self.list_playlists() if pl.owner_id == owner_id]
+
     @staticmethod
     def _norm_meta(text: str) -> str:
         return " ".join((text or "").casefold().split())
 
-    def library_matches_for_hit(self, video_id: str, title: str, artist: str) -> List[dict]:
-        """Playlists/tracks that are the same YouTube id or the same title+artist."""
+    def library_matches_for_hit(self, video_id: str, title: str, artist: str, owner_id: Optional[str] = None) -> List[dict]:
+        """Playlists/tracks that are the same YouTube id or the same title+artist (owner-scoped)."""
         vid = (video_id or "").strip()
         want_title = self._norm_meta(title)
         want_artist = self._norm_meta(artist)
         rows: List[dict] = []
         seen: set[tuple[str, str]] = set()
-        for pl in self.list_playlists():
+        for pl in self.list_playlists_for_user(owner_id):
             self.hydrate_media_paths(pl, persist=False)
             for t in pl.tracks:
                 tvid = self._youtube_video_id_for_track(t)
@@ -1027,7 +1078,7 @@ class DownloadService:
                 )
         return rows
 
-    def reload_library_all_qualities(self) -> dict:
+    def reload_library_all_qualities(self, owner_id: Optional[str] = None) -> dict:
         """Re-download every track at both quality tiers and drop every other format.
 
         Non-destructive per track: the old files are only deleted once both new
@@ -1036,7 +1087,7 @@ class DownloadService:
         """
         queued_tracks = 0
         skipped = 0
-        for pl in self.playlists.values():
+        for pl in self.list_playlists_for_user(owner_id):
             if self.is_liked_songs_playlist(pl.id):
                 continue
             for t in list(pl.tracks):
@@ -1157,18 +1208,20 @@ class DownloadService:
             except OSError:
                 continue
 
-    def downloads_remaining_count(self) -> int:
+    def downloads_remaining_count(self, owner_id: Optional[str] = None) -> int:
         """How many downloads are still in the pipeline (queued, running, or supplementary)."""
+        if not owner_id:
+            return 0
         pipeline = self.job_queue.qsize() + len(self.progress)
         status_n = 0
-        for pl in self.playlists.values():
+        for pl in self.list_playlists_for_user(owner_id):
             for t in pl.tracks:
                 if t.status in (DownloadStatus.queued, DownloadStatus.downloading):
                     status_n += 1
         return max(pipeline, status_n)
 
-    def error_tracks_for_sidebar(self) -> List[dict]:
-        """All tracks in error state (any playlist), for the downloads sidebar."""
+    def error_tracks_for_sidebar(self, owner_id: Optional[str] = None) -> List[dict]:
+        """Tracks in error state, for the downloads sidebar (scoped to the owner)."""
         if self._error_rows_cache is None:
             rows: List[dict] = []
             for pl in self.playlists.values():
@@ -1186,12 +1239,15 @@ class DownloadService:
                         }
                     )
             self._error_rows_cache = rows
-        return self._error_rows_cache
+        if not owner_id:
+            return []
+        owned = {pid for pid, pl in self.playlists.items() if pl.owner_id == owner_id}
+        return [r for r in self._error_rows_cache if r["playlist_id"] in owned]
 
-    def retry_all_error_tracks(self) -> int:
-        """Re-queue every track currently in error state (all playlists). Returns how many were queued."""
+    def retry_all_error_tracks(self, owner_id: Optional[str] = None) -> int:
+        """Re-queue every track currently in error state (scoped to owner). Returns how many were queued."""
         n = 0
-        for pl in self.playlists.values():
+        for pl in self.list_playlists_for_user(owner_id):
             for t in list(pl.tracks):
                 if t.status != DownloadStatus.error:
                     continue
@@ -1268,15 +1324,15 @@ class DownloadService:
             "quality": q,
         }
 
-    def queue_all_quality_downloads(self, quality: str) -> dict:
-        """Queue missing quality variants across all playlists (excluding Liked Songs)."""
+    def queue_all_quality_downloads(self, quality: str, owner_id: Optional[str] = None) -> dict:
+        """Queue missing quality variants across the owner's playlists (excluding Liked Songs)."""
         q = variant_key(parse_quality_kbps(quality))
         seen: set[str] = set()
         queued = 0
         already_have = 0
         ineligible = 0
         duplicates = 0
-        for pl in self.playlists.values():
+        for pl in self.list_playlists_for_user(owner_id):
             tallies = self._tally_playlist_quality_downloads(pl, q, seen)
             queued += tallies["queued"]
             already_have += tallies["already_have"]
@@ -1292,14 +1348,23 @@ class DownloadService:
             "quality": q,
         }
 
-    def progress_api_payload(self) -> dict:
-        """Shape used by GET /api/progress (active jobs + queue summary)."""
-        err_all = self.error_tracks_for_sidebar()
+    def progress_api_payload(self, owner_id: Optional[str] = None) -> dict:
+        """Shape used by GET /api/progress (active jobs + queue summary), scoped to the owner."""
+        err_all = self.error_tracks_for_sidebar(owner_id)
         max_err = 120
         err_slice = err_all[:max_err]
+        jobs = dict(self.progress)
+        if owner_id:
+            owned_tids = {
+                t.id
+                for pl in self.list_playlists_for_user(owner_id)
+                for t in pl.tracks
+            }
+            jobs = {tid: row for tid, row in jobs.items() if tid in owned_tids}
+        remaining = self.downloads_remaining_count(owner_id)
         return {
-            "jobs": dict(self.progress),
-            "remaining": self.downloads_remaining_count(),
+            "jobs": jobs,
+            "remaining": remaining,
             "queue_depth": self.job_queue.qsize(),
             "errors": err_slice,
             "errors_total": len(err_all),
@@ -1457,10 +1522,17 @@ class DownloadService:
             finally:
                 self.job_queue.task_done()
 
-    def import_from_line(self, raw: str) -> Playlist:
+    def import_from_line(self, raw: str, owner_id: Optional[str] = None) -> Playlist:
         """
         Top bar: Spotify playlist/track URL, YouTube video URL, or plain words (YouTube search).
         """
+        pl = self._import_dispatch(raw)
+        if owner_id and pl is not None:
+            pl.owner_id = owner_id
+            self._save_playlists()
+        return pl
+
+    def _import_dispatch(self, raw: str) -> Playlist:
         s = (raw or "").strip()
         if not s:
             raise ValueError("Enter a Spotify or YouTube link, or type a song / artist to search.")
@@ -1514,9 +1586,9 @@ class DownloadService:
         self._save_playlists()
         return pl
 
-    def import_spotify_playlist(self, spotify_url: str) -> Playlist:
+    def import_spotify_playlist(self, spotify_url: str, owner_id: Optional[str] = None) -> Playlist:
         """Same as the top bar importer (not playlists-only). Kept for clarity / callers."""
-        return self.import_from_line(spotify_url)
+        return self.import_from_line(spotify_url, owner_id)
 
     def _import_youtube_video_url(self, url: str) -> Playlist:
         opts = {
@@ -1700,22 +1772,13 @@ class DownloadService:
         if force_redownload:
             if not (track.url or track.youtube_video_id):
                 return False
-            rel = (track.media_variants or {}).get(q) or (track.media_relpath if q == "192" else None)
-            if rel:
-                audio_path = (self.root / "downloads" / rel).resolve()
-                downloads_root = (self.root / "downloads").resolve()
-                try:
-                    if audio_path.is_file() and audio_path.is_relative_to(downloads_root):
-                        delete_lyrics_sidecars(audio_path)
-                        audio_path.unlink()
-                except OSError:
-                    pass
-                if track.media_variants and q in track.media_variants:
-                    del track.media_variants[q]
+            # Never delete the current audio up front. The replacement is written
+            # alongside it and only the canonical files survive once both tiers
+            # exist (_rebuild_cleanup), so a failed re-download never costs audio.
             if track.status != DownloadStatus.downloading:
                 pl.update_track_status(track.id, DownloadStatus.queued, None)
             self._save_playlists()
-            self._enqueue_download(playlist_id.strip(), track.id, quality=q, supplementary=track.status == DownloadStatus.done)
+            self._enqueue_download(playlist_id.strip(), track.id, quality=q, force=True)
             return True
         if not self._track_has_resolved_file(track, q):
             supplementary = track.status == DownloadStatus.done or self._track_has_resolved_file(track)
@@ -1787,7 +1850,7 @@ class DownloadService:
                 }
         return hook
 
-    def _enqueue_download(self, pl_id: str, track_id: str, *, quality: str = str(DEFAULT_KBPS), supplementary: bool = False) -> None:
+    def _enqueue_download(self, pl_id: str, track_id: str, *, quality: str = str(DEFAULT_KBPS), supplementary: bool = False, force: bool = False) -> None:
         q = variant_key(parse_quality_kbps(quality))
         job_key = (track_id, q)
         with self._lock:
@@ -1802,7 +1865,7 @@ class DownloadService:
                 if not track:
                     return
 
-                if self._track_has_resolved_file(track, q):
+                if not force and self._track_has_resolved_file(track, q):
                     if not supplementary and track.status != DownloadStatus.done:
                         pl.update_track_status(track_id, DownloadStatus.done)
                         self._save_playlists(immediate=False)
@@ -1878,6 +1941,16 @@ class DownloadService:
                         q,
                         track_id,
                     )
+                    self._settle_supplementary_status(pl, track, track_id)
+                elif self._track_has_resolved_file(track):
+                    # A forced re-download produced nothing but the previous audio is
+                    # still on disk; keep the working track instead of flagging it.
+                    logging.getLogger(__name__).warning(
+                        "Download for %s kbps produced no file; keeping existing audio for track %s",
+                        q,
+                        track_id,
+                    )
+                    pl.update_track_status(track_id, DownloadStatus.done)
                 else:
                     err = (
                         "No YouTube match found. The track may be very obscure or region-locked on YouTube."
@@ -1895,8 +1968,18 @@ class DownloadService:
                         track_id,
                         q,
                     )
+                    if track and pl:
+                        self._settle_supplementary_status(pl, track, track_id)
                 elif pl:
-                    pl.update_track_status(track_id, DownloadStatus.error, str(exc))
+                    if track and self._track_has_resolved_file(track):
+                        logging.getLogger(__name__).warning(
+                            "Download for %s kbps failed; keeping existing audio for track %s",
+                            q,
+                            track_id,
+                        )
+                        pl.update_track_status(track_id, DownloadStatus.done)
+                    else:
+                        pl.update_track_status(track_id, DownloadStatus.error, str(exc))
             finally:
                 with self._lock:
                     self._pending_job_keys.discard(job_key)

@@ -16,6 +16,7 @@ SpoLocal is a local Spotify downloader web app. Users search/download tracks by 
 - `export_service.py` - `ExportService`: single-file and playlist ZIP exports.
 - `download_service.py` - `DownloadService`: the library + download aggregate. Owns playlists/tracks, persistence, hydration cache, download queue/workers, imports, likes. Composes `LyricsService` (`self.lyrics`).
 - `loudness_analysis.py` - LUFS analysis for playback normalization.
+- `auth_service.py` - `AccountService`: optional username+password accounts, optional TOTP MFA, session cookie/token, player devices, remote play/pause/next command queue. Search, stream, media, and playlist view stay public. Writes need a session. MFA is never required to listen.
 
 ## Project structure
 
@@ -35,6 +36,7 @@ webapp/
 ├── lyrics_fetch.py          # LRCLIB fetch
 ├── lyrics_text.py           # Lyrics text helpers
 ├── models.py                # Track / Playlist dataclasses
+├── auth_service.py          # Optional accounts + player devices
 ├── requirements.txt
 ├── templates/
 │   ├── index.html           # Main page: sidebar, search panel, player bar, lyrics panel, modals
@@ -145,7 +147,7 @@ Fixed overlay that opens above the player bar.
 5. `PlaylistMediaSessionController` - Media Session API + progress (via `transport.mediaSession`)
 6. `PlaylistQueueController` - queue management
 7. `PlaylistLyricsController` - lyrics fetch/render/toggle (delegates to editor/visualizer/colors)
-8. `PlaylistColumnResizer` - table column resize
+9. `AccountController` - optional login/register, device heartbeat, remote command poll
 
 Global non-playlist UI (search, preview, recommendations) lives in `app_shell.js` as the `AppShellController` class (classic script, booted via `window.AppShell.boot()`).
 

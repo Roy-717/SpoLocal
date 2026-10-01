@@ -1,7 +1,12 @@
 services:
   spolocal:
-    build: .
+    build:
+      context: .
+      network: host
     container_name: spolocal
+    dns:
+      - 1.1.1.1
+      - 9.9.9.9
     expose:
       - "8000"
     environment:
@@ -14,12 +19,14 @@ services:
       - ./webapp/static/css:/app/webapp/static/css
       - ./webapp/templates:/app/webapp/templates
       - ./webapp/main.py:/app/webapp/main.py
+      - ./webapp/auth_service.py:/app/webapp/auth_service.py
       - ./webapp/lyrics_fetch.py:/app/webapp/lyrics_fetch.py
       - ./webapp/lyrics_files.py:/app/webapp/lyrics_files.py
       - ./webapp/download_service.py:/app/webapp/download_service.py
       - ./webapp/tag_metadata.py:/app/webapp/tag_metadata.py
       - ./webapp/models.py:/app/webapp/models.py
       - ./webapp/audio_quality.py:/app/webapp/audio_quality.py
+      - ./webapp/youtube_stream.py:/app/webapp/youtube_stream.py
       - ./webapp/media_server.py:/app/webapp/media_server.py
       - ./webapp/loudness_analysis.py:/app/webapp/loudness_analysis.py
       - ./spotify_scraper.py:/app/spotify_scraper.py

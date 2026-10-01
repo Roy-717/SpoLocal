@@ -11,6 +11,7 @@ import { PlaylistDownloadController } from '../services/download_controller.js?v
 import { PlaylistColumnResizer } from '../ui/column_resizer.js';
 import { PlaylistHomeViewController } from './home_view_controller.js?v=89';
 import { SettingsController } from '../ui/settings_controller.js?v=2';
+import { AccountController } from '../ui/account_controller.js?v=2';
 import { TrackInfoController } from '../ui/track_info_controller.js';
 import { TrackEditController } from '../ui/track_edit_controller.js';
 import { AudioNormalizationController } from '../player/audio_normalization_controller.js';
@@ -41,6 +42,7 @@ export class PlaylistSessionController {
         this.download = new PlaylistDownloadController(state);
         this.home = new PlaylistHomeViewController(state, this.transport);
         this.settings = new SettingsController(state);
+        this.account = new AccountController(state);
         this.trackInfo = new TrackInfoController(state);
         this.trackEdit = new TrackEditController(state);
         this.songMix = new SongMixController(state);
@@ -52,6 +54,7 @@ export class PlaylistSessionController {
         this.queue.setCrossRefs(this.lyrics);
         this.editModal.setCrossRefs(this.contextMenu);
         this.settings.setCrossRefs(this.transport, this.download);
+        this.account.setTransport(this.transport);
         this.contextMenu.setCrossRefs(this.queue, this.editModal, this.transport, this.trackInfo, this.download, this.trackEdit, this.songMix);
         this.trackEdit.setCrossRefs(this.transport, this.queue, this.contextMenu);
         this.download.setCrossRefs(this);
@@ -72,6 +75,7 @@ export class PlaylistSessionController {
         this.editModal.init();
         this.contextMenu.init();
         this.settings.init();
+        this.account.init();
         this.trackInfo.init();
         this.trackEdit.init();
         this.download.init();

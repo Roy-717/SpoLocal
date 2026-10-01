@@ -44,7 +44,7 @@
                 </button>
             </form>
         </div>
-        <div class="shrink-0 flex items-center gap-1">
+        <div class="shrink-0 ml-auto flex items-center gap-1">
             <button type="button" id="open-settings"
                     class="p-2 rounded-md text-[#B3B3B3] hover:text-white hover:bg-[#282828]"
                     aria-label="Settings">
@@ -56,6 +56,11 @@
                     aria-expanded="false"
                     aria-controls="sidebar-downloads">
                 <i class="fa-solid fa-download text-lg" aria-hidden="true"></i>
+            </button>
+            <button type="button" id="open-account"
+                    class="p-2 rounded-md text-[#B3B3B3] hover:text-white hover:bg-[#282828]"
+                    aria-label="Account">
+                <i class="fa-solid fa-user text-lg" aria-hidden="true"></i>
             </button>
         </div>
     </div>
@@ -184,6 +189,94 @@
                     </button>
                 </div>
             </div>
+        </div>
+    </div>
+    <div id="account-modal"
+         class="isolate hidden fixed inset-0 z-[10050] flex items-center justify-center p-4"
+         role="dialog" aria-modal="true" aria-labelledby="account-heading">
+        <div id="account-modal-backdrop" class="absolute inset-0 bg-black/65"></div>
+        <div class="relative z-10 w-full max-w-sm rounded-xl border border-[#3E3E3E] bg-[#282828] shadow-2xl p-5 text-left">
+            <div class="flex items-start justify-between gap-3 mb-4">
+                <h2 id="account-heading" class="text-lg font-bold text-white">Account</h2>
+                <button type="button" id="account-close" class="text-[#727272] hover:text-white p-1 rounded-full hover:bg-[#3E3E3E]" aria-label="Close">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <p class="text-xs text-[#727272] mb-4">Your playlists are private per account. Log in to see and manage your library.</p>
+            <p id="account-error" class="hidden text-sm text-red-400 mb-3"></p>
+            <form id="account-form" class="space-y-3">
+                <div id="account-guest">
+                    <label class="block text-xs text-[#B3B3B3] mb-1" for="account-username">Username</label>
+                    <input id="account-username" name="username" type="text" autocomplete="username"
+                           class="search-input w-full rounded-md text-sm py-2 px-3 text-white"
+                           maxlength="32">
+                    <label class="block text-xs text-[#B3B3B3] mb-1 mt-3" for="account-password">Password</label>
+                    <input id="account-password" name="password" type="password" autocomplete="current-password"
+                           minlength="10" maxlength="200"
+                           class="search-input w-full rounded-md text-sm py-2 px-3 text-white">
+                    <p class="text-[11px] text-[#727272] mt-1">At least 10 characters. Optional account.</p>
+                    <div class="flex gap-2 mt-4">
+                        <button type="submit" id="account-login"
+                                class="flex-1 rounded-md bg-[#1DB954] hover:bg-[#1ed760] text-black text-sm font-semibold py-2">
+                            Log in
+                        </button>
+                        <button type="button" id="account-register"
+                                class="flex-1 rounded-md border border-[#535353] text-[#B3B3B3] hover:text-white hover:border-[#727272] text-sm font-semibold py-2">
+                            Register
+                        </button>
+                    </div>
+                </div>
+                <div id="account-mfa-login" class="hidden">
+                    <p class="text-sm text-white mb-3">Password ok. Enter the 6-digit authenticator code.</p>
+                    <label class="block text-xs text-[#B3B3B3] mb-1" for="account-mfa-code">Code</label>
+                    <input id="account-mfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8"
+                           class="search-input w-full rounded-md text-sm py-2 px-3 text-white">
+                    <div class="flex gap-2 mt-4">
+                        <button type="button" id="account-mfa-submit"
+                                class="flex-1 rounded-md bg-[#1DB954] hover:bg-[#1ed760] text-black text-sm font-semibold py-2">
+                            Confirm
+                        </button>
+                        <button type="button" id="account-mfa-back"
+                                class="flex-1 rounded-md border border-[#535353] text-[#B3B3B3] hover:text-white text-sm font-semibold py-2">
+                            Back
+                        </button>
+                    </div>
+                </div>
+                <div id="account-signed" class="hidden">
+                    <p class="text-sm text-white">Signed in as <span id="account-signed-name" class="font-semibold"></span></p>
+                    <p id="account-device-label" class="text-xs text-[#727272] mt-2"></p>
+                    <p id="account-mfa-status" class="text-xs text-[#727272] mt-2"></p>
+                    <button type="button" id="account-mfa-enable"
+                            class="mt-3 w-full rounded-md border border-[#535353] text-[#B3B3B3] hover:text-white hover:border-[#727272] text-sm font-semibold py-2">
+                        Enable MFA
+                    </button>
+                    <div id="account-mfa-setup" class="hidden mt-3 space-y-2">
+                        <p class="text-xs text-[#B3B3B3]">Paste this secret into your authenticator, then confirm with a code.</p>
+                        <p id="account-mfa-secret" class="text-xs font-mono break-all text-white select-all"></p>
+                        <p id="account-mfa-uri" class="text-[11px] break-all text-[#727272] select-all"></p>
+                        <input id="account-mfa-confirm-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8"
+                               placeholder="6-digit code"
+                               class="search-input w-full rounded-md text-sm py-2 px-3 text-white">
+                        <button type="button" id="account-mfa-confirm"
+                                class="w-full rounded-md bg-[#1DB954] hover:bg-[#1ed760] text-black text-sm font-semibold py-2">
+                            Confirm MFA
+                        </button>
+                    </div>
+                    <div id="account-mfa-disable" class="hidden mt-3 space-y-2">
+                        <input id="account-mfa-disable-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8"
+                               placeholder="Current code"
+                               class="search-input w-full rounded-md text-sm py-2 px-3 text-white">
+                        <button type="button" id="account-mfa-disable-btn"
+                                class="w-full rounded-md border border-[#535353] text-[#B3B3B3] hover:text-white hover:border-[#727272] text-sm font-semibold py-2">
+                            Disable MFA
+                        </button>
+                    </div>
+                    <button type="button" id="account-logout"
+                            class="mt-4 w-full rounded-md border border-[#535353] text-[#B3B3B3] hover:text-white hover:border-[#727272] text-sm font-semibold py-2">
+                        Log out
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
     <div id="playlist-edit-modal"
@@ -327,6 +420,11 @@
             </div>
 
             <div class="mt-3 px-3 text-xs text-[#727272] font-medium tracking-wider">PLAYLISTS</div>
+            {% if not user %}
+            <div class="mt-1 px-3 text-xs text-[#727272]">
+                <button type="button" id="sidebar-login-hint" class="underline hover:text-white">Log in</button> to use your library.
+            </div>
+            {% endif %}
 
             <div id="sidebar-playlist-list" class="mt-1 flex-1 min-h-0 overflow-y-auto pr-1 space-y-0.5">
                 {% for row in playlist_nav %}
@@ -596,7 +694,7 @@
         window.butterchurn = butterchurn && butterchurn.default ? butterchurn.default : butterchurn;
         window.dispatchEvent(new Event('spolocal-butterchurn-ready'));
     </script>
-        <script type="module" src="/static/js/PlaylistSession.mjs?v=107"></script>
+        <script type="module" src="/static/js/PlaylistSession.mjs?v=108"></script>
     <script type="module" src="/static/pwa/pwa-entry.js"></script>
     <script src="/static/js/app_shell.js?v=33" defer></script>
 </body>

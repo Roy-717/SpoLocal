@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>SpoLocal Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({startOnLoad:true});</script>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 72em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      white-space: pre-wrap;
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    .mermaid {
+      overflow-x: auto;
+      text-align: center;
+    }
+    .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">SpoLocal Architecture</h1>
+</header>
+<h1 id="spolocal-architecture">SpoLocal architecture</h1>
+<p>Class-level overview of the app. Backend is FastAPI + Python
+services, frontend is vanilla JS ES modules (OOP controllers). The two
+halves talk only over HTTP (<code>/api/...</code>,
+<code>/media/...</code>), so no class in one diagram depends on a class
+in the other.</p>
+<p>Module-level helpers are not classes and are left out:
+<code>audio_quality.py</code>, <code>tag_metadata.py</code>,
+<code>cover_image.py</code>, <code>lyrics_files.py</code>,
+<code>lyrics_fetch.py</code>, <code>lyrics_text.py</code>,
+<code>loudness_analysis.py</code>, and the pydantic request bodies in
+<code>main.py</code>.</p>
+<h2 id="backend">Backend</h2>
+<p><code>main.py</code> is a thin router. All work lives in the service
+classes below.</p>
+<div class="mermaid">classDiagram
+    direction TB
+
+    class MainApp {
+        +index()
+        +api_stream()
+        +serve_media()
+        +api_media_prepare()
+        +export_track_file()
+        +export_playlist_zip()
+    }
+
+    class DownloadService {
+        +playlists
+        +progress
+        +create_playlist()
+        +add_track_to_playlist()
+        +start_track_download()
+        +queue_playlist_quality_downloads()
+        +hydrate_media_paths()
+        +get_track_audio_path()
+        +set_track_liked()
+    }
+
+    class LyricsService {
+        +get_lyrics_payload()
+        +save_track_lyrics_file()
+        +save_track_lrc_file()
+        +remote_payload()
+        +materialize_after_download()
+    }
+
+    class ExportService {
+        +get_track_export()
+        +build_playlist_export_zip()
+    }
+
+    class MediaServer {
+        +media_root
+        +serve(sliced)
+        +prepare(media_path)
+        +content_type(path)
+    }
+
+    class YouTubeStreamingService {
+        +get_preview_payload()
+        +get_video_payload()
+        +resolve_track_play_src()
+        +proxy(vid)
+        +prefetch_mix_stream_payloads()
+        +fetch_thumbnail_bytes()
+    }
+
+    class YoutubeStreamProxy {
+        +response_for(request)
+    }
+
+    class YoutubeCdnAudio {
+        +url
+        +ext
+        +filesize
+        +duration_sec
+        +slice_for_range_header()
+    }
+
+    class YoutubeThumbQuality {
+        +parse(q)
+    }
+
+    class YtDlpAudioDownloader {
+        +download_from_line()
+        +download_urls()
+    }
+
+    class SpotifyEmbedDownloader {
+        +download_track()
+        +get_track_info()
+        +get_playlist_info()
+    }
+
+    class YoutubePlaylistMix {
+        +mix_url(vid)
+    }
+
+    class SpotifyEmbedAPI {
+        +get_track()
+        +get_playlist()
+    }
+
+    class Playlist {
+        +id
+        +name
+        +tracks
+        +add_track()
+        +get_track()
+        +update_track_status()
+    }
+
+    class Track {
+        +id
+        +title
+        +artist
+        +status
+        +media_relpath
+        +media_variants
+        +play_src()
+        +set_media_variant()
+        +resolved_youtube_video_id()
+    }
+
+    class DownloadStatus {
+        &lt;&lt;enumeration&gt;&gt;
+        queued
+        downloading
+        done
+        error
+        pending
+    }
+
+    MainApp --&gt; DownloadService
+    MainApp --&gt; LyricsService
+    MainApp --&gt; ExportService
+    MainApp --&gt; MediaServer
+    MainApp --&gt; YouTubeStreamingService
+    MainApp --&gt; YtDlpAudioDownloader
+    MainApp --&gt; SpotifyEmbedDownloader
+    MainApp --&gt; YoutubePlaylistMix
+
+    DownloadService *-- LyricsService : self.lyrics
+    DownloadService *-- SpotifyEmbedDownloader : self._embed
+    DownloadService *-- Playlist : playlists
+    DownloadService ..&gt; YtDlpAudioDownloader : download jobs
+    Playlist *-- Track : tracks
+    Track --&gt; DownloadStatus
+    LyricsService --&gt; DownloadService : download
+    ExportService --&gt; DownloadService : download
+    SpotifyEmbedDownloader --&gt; SpotifyEmbedAPI : self._api
+    YouTubeStreamingService *-- YoutubeCdnAudio : preview and video caches
+    YouTubeStreamingService ..&gt; YoutubeStreamProxy : creates
+    YouTubeStreamingService --&gt; YoutubeThumbQuality
+    YoutubeStreamProxy --&gt; YouTubeStreamingService : service</div>
+<p><code>DownloadService</code> also keeps a private hydration cache
+(<code>_HydrationCacheEntry</code>: stem-to-path map plus lazy albums)
+that is not shown above.</p>
+<h2 id="frontend-session-and-player">Frontend: session and player</h2>
+<p><code>PlaylistSession.mjs</code> builds
+<code>PlaylistPlayerState</code>,
+<code>PlaylistSessionController</code>, and the shared
+<code>MseStreamController</code> (exposed as
+<code>window.SpolocalMse</code>). <code>PlaylistSessionController</code>
+creates every sub-controller and then wires the cross-references each
+one needs.</p>
+<div class="mermaid">classDiagram
+    direction TB
+
+    class PlaylistSessionController {
+        +state
+        +transport
+        +queue
+        +lyrics
+        +quality
+        +home
+        +download
+        +contextMenu
+        +editModal
+        +settings
+        +trackInfo
+        +trackEdit
+        +songMix
+        +bootstrap()
+        +navigatePlaylist()
+        +restoreLastPlayback()
+    }
+
+    class PlaylistPlayerState {
+        +hub
+        +currentTrackId
+        +audio
+        +tracks
+        +playingTracks
+    }
+
+    class PlaylistTransportController {
+        +playLibraryEntry()
+        +playTrackById()
+        +playAtDelta()
+        +toggle_main_play()
+        +seek_to_time_from_slider()
+        +advance_search_stream()
+        +_attach_playback_source()
+    }
+
+    class PlaybackQualityController {
+        +ensurePlaybackVariantReady()
+        +switchPlaybackQuality()
+        +apply_track_loudness()
+        +replace_audio_src()
+    }
+
+    class PlaylistQueueController {
+        +render_queue_list()
+        +play_track_from_queue_entry()
+        +restore_manual_queue_from_storage()
+    }
+
+    class MseStreamController {
+        +play(vid)
+        +play_media(src)
+        +seek_to()
+        +stop()
+        +is_active()
+    }
+
+    class AudioNormalizationController {
+        +set_track_gain()
+        +set_user_volume()
+    }
+
+    class SpolocalQualityPrefs {
+        +playbackKbps()
+        +downloadKbps()
+        +resolvePlaybackPlaySrc()
+        +normalizeMediaPath()
+        +streamFitsTier()
+    }
+
+    class SpolocalCoverUrls {
+        +trackCoverUrl()
+        +youtubeThumbApiUrl()
+    }
+
+    class PlaylistLikeController
+    class PlaylistShuffleController
+    class PlaylistMediaSessionController
+    class PlaylistHomeViewController
+    class PlaylistLyricsController
+    class PlaylistDownloadController
+    class PlaylistContextMenuController
+    class PlaylistEditModalController
+    class SettingsController
+    class TrackInfoController
+    class TrackEditController
+    class SongMixController
+    class PlaylistColumnResizer
+    class AppShellController {
+        +boot()
+        +playPreview()
+        +stopPreview()
+    }
+    class SpolocalMobileSheetDrawers
+
+    PlaylistSessionController *-- PlaylistPlayerState : state
+    PlaylistSessionController *-- PlaylistTransportController : transport
+    PlaylistSessionController *-- PlaybackQualityController : quality
+    PlaylistSessionController *-- PlaylistQueueController : queue
+    PlaylistSessionController *-- PlaylistLyricsController : lyrics
+    PlaylistSessionController *-- PlaylistLikeController : likes
+    PlaylistSessionController *-- PlaylistShuffleController : shuffle
+    PlaylistSessionController *-- PlaylistMediaSessionController : mediaSession
+    PlaylistSessionController *-- PlaylistHomeViewController : home
+    PlaylistSessionController *-- PlaylistDownloadController : download
+    PlaylistSessionController *-- PlaylistContextMenuController : contextMenu
+    PlaylistSessionController *-- PlaylistEditModalController : editModal
+    PlaylistSessionController *-- SettingsController : settings
+    PlaylistSessionController *-- TrackInfoController : trackInfo
+    PlaylistSessionController *-- TrackEditController : trackEdit
+    PlaylistSessionController *-- SongMixController : songMix
+    PlaylistSessionController ..&gt; AudioNormalizationController : hub.audioNormalization
+    PlaylistSessionController ..&gt; PlaylistColumnResizer : init()
+
+    PlaylistTransportController --&gt; PlaybackQualityController : quality
+    PlaylistTransportController --&gt; PlaylistQueueController : queue
+    PlaylistTransportController --&gt; PlaylistLyricsController : lyrics
+    PlaylistTransportController --&gt; PlaylistHomeViewController : home
+    PlaylistTransportController --&gt; MseStreamController : window.SpolocalMse
+    PlaylistTransportController ..&gt; AudioNormalizationController : hub.audioNormalization
+    PlaylistTransportController --&gt; SpolocalQualityPrefs
+    PlaybackQualityController --&gt; PlaylistTransportController : transport
+    PlaylistQueueController --&gt; PlaylistTransportController : transport
+    PlaylistLyricsController --&gt; PlaylistTransportController : transport
+    SettingsController --&gt; PlaylistTransportController
+    SettingsController --&gt; PlaylistDownloadController
+    PlaylistContextMenuController --&gt; PlaylistTransportController
+    PlaylistContextMenuController --&gt; PlaylistQueueController
+    PlaylistContextMenuController --&gt; SongMixController
+    PlaylistContextMenuController --&gt; TrackInfoController
+    TrackEditController --&gt; PlaylistTransportController
+    PlaylistDownloadController --&gt; PlaylistSessionController : session
+    AppShellController ..&gt; MseStreamController : preview playback
+    AppShellController *-- SpolocalMobileSheetDrawers
+    SpolocalCoverUrls ..&gt; SpolocalQualityPrefs</div>
+<p><code>SpolocalQualityPrefs</code> and <code>SpolocalCoverUrls</code>
+are a namespace object and a small class in
+<code>audio_quality_prefs.js</code>, not ES module exports.
+<code>AppShellController</code> is a classic script booted separately
+from the module graph (<code>window.AppShell.boot()</code>); it handles
+the global UI (search, preview, recommendations) and shares the same
+<code>window.SpolocalMse</code> instance.</p>
+<h2 id="lyrics-subsystem">Lyrics subsystem</h2>
+<p><code>PlaylistLyricsController</code> owns the LRC editor, the
+background visualizer, and the palette math extracted from the cover
+art.</p>
+<div class="mermaid">classDiagram
+    direction TB
+
+    class PlaylistLyricsController {
+        +colors
+        +visualizer
+        +editor
+        +fetchLyrics()
+        +renderLyrics()
+        +setLyricsMode()
+        +sync_stream_video_clock()
+        +extractCoverColors()
+    }
+
+    class LyricsEditorController {
+        +renderLrcEditor()
+        +renderLrcLinesInEditor()
+        +formatLrcTimestamp()
+        +parseLrcTimestamp()
+        +adjust_timestamp()
+        +shiftAllTimestamps()
+        +saveLyrics()
+    }
+
+    class LyricsVisualizerController {
+        +paper_shaders
+        +wave_field
+        +milkdrop
+        +init()
+        +bind_visualizer_mode()
+        +sync_visualizer_mode_ui()
+        +current_visualizer_track()
+    }
+
+    class LyricsColorExtractor {
+        +isColorDark()
+        +rgb_to_hsl()
+        +hsl_to_rgb()
+        +ranked_cover_hues()
+        +pick_cover_hues()
+        +calculateLyricsColors()
+    }
+
+    class LyricsWaveField {
+        +start()
+        +stop()
+    }
+
+    class LyricsMilkdrop {
+        +PACKS
+        +start()
+        +stop()
+    }
+
+    class LyricsPaperShaders {
+        +MOOD
+        +start()
+        +stop()
+    }
+
+    PlaylistLyricsController *-- LyricsEditorController : editor
+    PlaylistLyricsController *-- LyricsVisualizerController : visualizer
+    PlaylistLyricsController *-- LyricsColorExtractor : colors
+    LyricsVisualizerController *-- LyricsWaveField : wave_field
+    LyricsVisualizerController *-- LyricsMilkdrop : milkdrop
+    LyricsVisualizerController *-- LyricsPaperShaders : paper_shaders</div>
+</body>
+</html>

@@ -158,6 +158,9 @@ class Playlist:
     spotify_catalog_key: Optional[str] = None
     spotify_snapshot_id: Optional[str] = None
     bio: Optional[str] = None
+    # Account that owns this playlist. None = unclaimed (visible to no one until
+    # a user logs in and claims it).
+    owner_id: Optional[str] = None
 
     @classmethod
     def create(cls, name: str) -> "Playlist":

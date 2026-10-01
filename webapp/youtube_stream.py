@@ -407,14 +407,19 @@ class YoutubeStreamProxy:
             raise HTTPException(status_code=503, detail="Stream range unavailable")
         if self.height:
             raise HTTPException(status_code=502, detail="Video stream unavailable")
-        _log.warning("cdn give up vid=%s, mp3 pipe", self.video_id)
-        return await self._ytdlp_mp3_pipe_response()
+        _log.warning("cdn give up vid=%s, webm pipe", self.video_id)
+        return await self._ytdlp_webm_pipe_response()
 
-    async def _ytdlp_mp3_pipe_response(self) -> StreamingResponse:
+    async def _ytdlp_webm_pipe_response(self) -> StreamingResponse:
         ytdlp = " ".join(shlex.quote(part) for part in _ytdlp_audio_cmd(self.video_id))
+        # WebM/Opus, not MP3: the browser's MSE SourceBuffer was created as
+        # audio/webm; codecs="opus" (from /api/stream/prepare), so the fallback
+        # bytes must match or the WebM demuxer throws "Invalid element id".
+        # libopus re-encode (not -c copy) because the yt-dlp input may be m4a/AAC,
+        # which cannot go into a WebM container.
         cmd = (
             ytdlp
-            + " | ffmpeg -hide_banner -loglevel error -i pipe:0 -vn -c:a libmp3lame -q:a 6 -f mp3 pipe:1"
+            + " | ffmpeg -hide_banner -loglevel error -i pipe:0 -vn -c:a libopus -b:a 160k -f webm pipe:1"
         )
         proc = await asyncio.create_subprocess_shell(
             cmd,
@@ -438,11 +443,11 @@ class YoutubeStreamProxy:
                     proc.kill()
                 await proc.wait()
                 if not sent_any:
-                    _log.warning("mp3 pipe empty vid=%s", self.video_id)
+                    _log.warning("webm pipe empty vid=%s", self.video_id)
 
         return StreamingResponse(
             generate(),
-            media_type="audio/mpeg",
+            media_type="audio/webm",
             headers={
                 "Accept-Ranges": "none",
                 "Cache-Control": "no-store",

@@ -42,6 +42,7 @@ from youtube_stream import YouTubeStreamingService, YoutubeThumbQuality
 from media_server import MediaServer
 from lyrics_service import LyricsService
 from export_service import ExportService
+from auth_service import AccountService, AttemptLimiter, COOKIE_NAME
 
 
 def _youtube_video_id_from_track_metadata(artist: str, title: str) -> Optional[str]:
@@ -63,10 +64,12 @@ load_dotenv(_webapp_dir / ".env")
 
 app = FastAPI(title="SpoLocal")
 
+# Public reads may be called cross-origin. Cookies stay same-origin only
+# (SameSite=strict). Never pair allow_origins=["*"] with credentials.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -86,6 +89,8 @@ from spotify_scraper import YoutubePlaylistMix, search_youtube_tracks
 service = DownloadService(root)
 lyrics_service = LyricsService(service)
 export_service = ExportService(service)
+accounts = AccountService(root)
+auth_limiter = AttemptLimiter(max_n=5, window=60.0)
 
 _SEARCH_PREVIEW_LIMIT = 6
 _SEARCH_CACHE_MAX_RESULTS = 30
@@ -195,9 +200,9 @@ def _cover_tiles_for_playlist(pl: Playlist) -> list[str]:
     return [f"/playlists/{pl.id}/tracks/{t.id}/cover" for t in pl.tracks[:4]]
 
 
-def _library_pool_payload() -> list[dict[str, Any]]:
+def _library_pool_payload(owner_id: Optional[str] = None) -> list[dict[str, Any]]:
     pool: list[dict[str, Any]] = []
-    for pl in service.list_playlists():
+    for pl in service.list_playlists_for_user(owner_id):
         for t in pl.tracks:
             variants = track_play_variants(t)
             src = streaming.resolve_track_play_src(t)
@@ -219,19 +224,22 @@ def _library_pool_payload() -> list[dict[str, Any]]:
     return pool
 
 
-def _annotate_library_matches(hits: list[dict[str, Any]]) -> None:
+def _annotate_library_matches(hits: list[dict[str, Any]], owner_id: Optional[str] = None) -> None:
     for hit in hits:
         hit["library_matches"] = service.library_matches_for_hit(
             str(hit.get("video_id") or ""),
             str(hit.get("title") or ""),
             str(hit.get("artist") or hit.get("channel") or ""),
+            owner_id,
         )
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, playlist_id: Optional[str] = None):
+    user = _auth_user(request)
+    uid = user["id"] if user else None
     pid = playlist_id.strip() if playlist_id else None
-    playlists = service.list_playlists()
+    playlists = service.list_playlists_for_user(uid)
     is_home = not pid
     current: Optional[Playlist] = None
     current_tracks_payload: list[dict[str, Any]] = []
@@ -239,7 +247,7 @@ async def index(request: Request, playlist_id: Optional[str] = None):
     home_library_pool: list[dict[str, Any]] = []
 
     if pid:
-        current = service.get_playlist(pid)
+        current = service.get_playlist_for_user(pid, uid)
         if not current:
             is_home = True
         else:
@@ -250,11 +258,11 @@ async def index(request: Request, playlist_id: Optional[str] = None):
     if is_home:
         for pl in playlists:
             await asyncio.to_thread(service.hydrate_media_paths, pl, fill_albums=False, persist=False)
-        home_library_pool = _library_pool_payload()
+        home_library_pool = _library_pool_payload(uid)
 
     nav_current = None if is_home else (current.id if current else None)
-    playlist_nav = service.list_playlist_nav(nav_current)
-    playlist_catalog = service.list_playlist_catalog()
+    playlist_nav = service.list_playlist_nav(nav_current, uid)
+    playlist_catalog = service.list_playlist_catalog(uid)
     return templates.TemplateResponse(
         "index.html",
         {
@@ -267,19 +275,240 @@ async def index(request: Request, playlist_id: Optional[str] = None):
             "current_tracks_payload": current_tracks_payload,
             "home_library_pool": home_library_pool,
             "service": service,
-            "liked_playlist_id": DownloadService.LIKED_SONGS_PLAYLIST_ID,
+            "liked_playlist_id": service.liked_songs_id_for(uid),
+            "user": user,
         },
     )
 
 
+def _session_cookie_kwargs(request: Request) -> dict[str, Any]:
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
+    return {
+        "httponly": True,
+        "samesite": "strict",
+        "secure": proto == "https",
+        "max_age": 30 * 24 * 3600,
+        "path": "/",
+    }
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _auth_guard(request: Request) -> None:
+    key = _client_ip(request)
+    if auth_limiter.blocked(key):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again in a minute.")
+
+
+def _auth_user(request: Request, *, required: bool = False) -> Optional[dict[str, Any]]:
+    user = accounts.user_from_request(
+        request.cookies.get(COOKIE_NAME),
+        request.headers.get("authorization"),
+    )
+    if required and not user:
+        raise HTTPException(status_code=401, detail="Login required")
+    return user
+
+
+def _owner_id(request: Request, *, required: bool = False) -> Optional[str]:
+    user = _auth_user(request, required=required)
+    return user["id"] if user else None
+
+
+def _owned_playlist_or_404(request: Request, playlist_id: str) -> Playlist:
+    """Login + ownership gate for any playlist-scoped route. 404 hides existence."""
+    uid = _owner_id(request, required=True)
+    pl = service.get_playlist_for_user(playlist_id, uid)
+    if not pl:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    return pl
+
+
+class AuthBody(BaseModel):
+    username: str = Field(..., min_length=1, max_length=32)
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+class DeviceBody(BaseModel):
+    id: Optional[str] = None
+    name: str = Field("Player", max_length=80)
+    make_active: bool = True
+
+
+class PlayerCommandBody(BaseModel):
+    action: str = Field(..., min_length=1, max_length=16)
+    device_id: Optional[str] = None
+
+
+@app.get("/api/auth/me")
+async def api_auth_me(request: Request):
+    """Guest when not logged in. Search, stream, and playlist view stay public."""
+    return JSONResponse({"user": _auth_user(request)})
+
+
+@app.post("/api/auth/register")
+async def api_auth_register(body: AuthBody, request: Request):
+    _auth_guard(request)
+    ip = _client_ip(request)
+    try:
+        result = accounts.register(body.username, body.password)
+    except ValueError as exc:
+        auth_limiter.hit(ip)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    auth_limiter.clear(ip)
+    service.claim_ownerless_playlists(result["user"]["id"])
+    resp = JSONResponse(result)
+    resp.set_cookie(COOKIE_NAME, result["token"], **_session_cookie_kwargs(request))
+    return resp
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(body: AuthBody, request: Request):
+    _auth_guard(request)
+    ip = _client_ip(request)
+    try:
+        result = accounts.login(body.username, body.password)
+    except ValueError as exc:
+        auth_limiter.hit(ip)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result.get("mfa_required"):
+        return JSONResponse({
+            "mfa_required": True,
+            "mfa_token": result["mfa_token"],
+        })
+    auth_limiter.clear(ip)
+    service.claim_ownerless_playlists(result["user"]["id"])
+    resp = JSONResponse(result)
+    resp.set_cookie(COOKIE_NAME, result["token"], **_session_cookie_kwargs(request))
+    return resp
+
+
+class MfaLoginBody(BaseModel):
+    mfa_token: str = Field(..., min_length=10, max_length=200)
+    code: str = Field(..., min_length=6, max_length=16)
+
+
+class MfaCodeBody(BaseModel):
+    code: str = Field(..., min_length=6, max_length=16)
+
+
+@app.post("/api/auth/login/mfa")
+async def api_auth_login_mfa(body: MfaLoginBody, request: Request):
+    _auth_guard(request)
+    ip = _client_ip(request)
+    try:
+        result = accounts.complete_mfa_login(body.mfa_token, body.code)
+    except ValueError as exc:
+        auth_limiter.hit(ip)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    auth_limiter.clear(ip)
+    service.claim_ownerless_playlists(result["user"]["id"])
+    resp = JSONResponse(result)
+    resp.set_cookie(COOKIE_NAME, result["token"], **_session_cookie_kwargs(request))
+    return resp
+
+
+@app.get("/api/auth/mfa/setup")
+async def api_auth_mfa_setup(request: Request):
+    user = _auth_user(request, required=True)
+    try:
+        return JSONResponse(accounts.begin_mfa_setup(user["id"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/auth/mfa/confirm")
+async def api_auth_mfa_confirm(body: MfaCodeBody, request: Request):
+    _auth_guard(request)
+    user = _auth_user(request, required=True)
+    ip = _client_ip(request)
+    try:
+        result = accounts.confirm_mfa(user["id"], body.code)
+    except ValueError as exc:
+        auth_limiter.hit(ip)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    auth_limiter.clear(ip)
+    return JSONResponse(result)
+
+
+@app.post("/api/auth/mfa/disable")
+async def api_auth_mfa_disable(body: MfaCodeBody, request: Request):
+    _auth_guard(request)
+    user = _auth_user(request, required=True)
+    ip = _client_ip(request)
+    try:
+        result = accounts.disable_mfa(user["id"], body.code)
+    except ValueError as exc:
+        auth_limiter.hit(ip)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    auth_limiter.clear(ip)
+    return JSONResponse(result)
+
+
+@app.post("/api/auth/logout")
+async def api_auth_logout(request: Request):
+    accounts.logout(request.cookies.get(COOKIE_NAME), request.headers.get("authorization"))
+    resp = JSONResponse({"ok": True, "user": None})
+    resp.delete_cookie(COOKIE_NAME, path="/")
+    return resp
+
+
+@app.post("/api/auth/devices")
+async def api_auth_devices(body: DeviceBody, request: Request):
+    user = _auth_user(request, required=True)
+    try:
+        public = accounts.upsert_device(
+            user["id"],
+            body.id,
+            body.name,
+            make_active=body.make_active,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"user": public})
+
+
+@app.post("/api/auth/devices/{device_id}/active")
+async def api_auth_device_active(device_id: str, request: Request):
+    user = _auth_user(request, required=True)
+    try:
+        public = accounts.set_active_device(user["id"], device_id.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"user": public})
+
+
+@app.post("/api/player/commands")
+async def api_player_commands(body: PlayerCommandBody, request: Request):
+    """Queue play/pause/next for a logged-in user's active (or named) device."""
+    user = _auth_user(request, required=True)
+    try:
+        return JSONResponse(accounts.enqueue_command(user["id"], body.action, body.device_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/player/commands/poll")
+async def api_player_commands_poll(request: Request, device_id: str = Query(..., min_length=1)):
+    user = _auth_user(request, required=True)
+    return JSONResponse({"commands": accounts.poll_commands(user["id"], device_id.strip())})
+
+
 @app.get("/api/playlists/catalog")
-async def api_playlists_catalog():
-    return JSONResponse(service.list_playlist_catalog())
+async def api_playlists_catalog(request: Request):
+    return JSONResponse(service.list_playlist_catalog(_owner_id(request)))
 
 
 @app.get("/api/liked-keys")
-async def api_liked_keys():
-    return JSONResponse({"keys": service.list_liked_entry_keys()})
+async def api_liked_keys(request: Request):
+    return JSONResponse({"keys": service.list_liked_entry_keys(_owner_id(request))})
 
 
 class CreatePlaylistBody(BaseModel):
@@ -299,8 +528,9 @@ class TrackDetailsBody(BaseModel):
 
 
 @app.post("/api/track/like")
-async def api_track_like(body: TrackLikeBody):
-    ok = service.set_track_liked(body.source_playlist_id.strip(), body.source_track_id.strip(), body.liked)
+async def api_track_like(body: TrackLikeBody, request: Request):
+    uid = _owner_id(request, required=True)
+    ok = service.set_track_liked(body.source_playlist_id.strip(), body.source_track_id.strip(), body.liked, uid)
     if not ok:
         raise HTTPException(
             status_code=400,
@@ -310,7 +540,8 @@ async def api_track_like(body: TrackLikeBody):
 
 
 @app.get("/api/playlists/{playlist_id}/tracks/{track_id}/info")
-async def api_track_info(playlist_id: str, track_id: str):
+async def api_track_info(playlist_id: str, track_id: str, request: Request):
+    _owned_playlist_or_404(request, playlist_id)
     info = service.get_track_info(playlist_id, track_id)
     if not info:
         raise HTTPException(status_code=404, detail="Track not found")
@@ -318,7 +549,8 @@ async def api_track_info(playlist_id: str, track_id: str):
 
 
 @app.post("/api/playlists/{playlist_id}/tracks/{track_id}/details")
-async def api_track_details(playlist_id: str, track_id: str, body: TrackDetailsBody):
+async def api_track_details(playlist_id: str, track_id: str, body: TrackDetailsBody, request: Request):
+    _owned_playlist_or_404(request, playlist_id)
     updated = await asyncio.to_thread(
         service.update_track_details,
         playlist_id,
@@ -333,15 +565,12 @@ async def api_track_details(playlist_id: str, track_id: str, body: TrackDetailsB
 
 
 @app.get("/api/playlists/{playlist_id}/tracks/{track_id}/loudness-gain")
-async def api_track_loudness_gain(playlist_id: str, track_id: str):
+async def api_track_loudness_gain(playlist_id: str, track_id: str, request: Request):
     """Return the cached loudness gain, or kick off background analysis and return pending.
 
     Analysis runs ffmpeg ebur128 over the whole file (seconds), so never block playback on it.
-    The client polls while `pending` is true until the gain is cached.
     """
-    pl = service.get_playlist(playlist_id.strip())
-    if not pl:
-        raise HTTPException(status_code=404, detail="Playlist not found")
+    pl = _owned_playlist_or_404(request, playlist_id)
     track = pl.get_track(track_id.strip())
     if not track:
         raise HTTPException(status_code=404, detail="Track not found")
@@ -358,10 +587,8 @@ async def api_track_loudness_gain(playlist_id: str, track_id: str):
 
 
 @app.get("/api/playlist/state")
-async def api_playlist_state(playlist_id: str):
-    pl = service.get_playlist(playlist_id.strip())
-    if not pl:
-        raise HTTPException(status_code=404, detail="Playlist not found")
+async def api_playlist_state(request: Request, playlist_id: str):
+    pl = _owned_playlist_or_404(request, playlist_id)
     await asyncio.to_thread(service.hydrate_media_paths, pl, fill_albums=False, persist=False)
     return JSONResponse(
         {
@@ -374,7 +601,8 @@ async def api_playlist_state(playlist_id: str):
 @app.get("/api/home/view")
 async def api_home_view(request: Request):
     """HTML fragment for in-page home switching."""
-    for pl in service.list_playlists():
+    uid = _owner_id(request)
+    for pl in service.list_playlists_for_user(uid):
         await asyncio.to_thread(service.hydrate_media_paths, pl, fill_albums=False, persist=False)
     tpl = templates.env.get_template("partials/home_main.html")
     html = tpl.render(request=request)
@@ -382,16 +610,17 @@ async def api_home_view(request: Request):
         {
             "html": html,
             "view": "home",
-            "library_pool": _library_pool_payload(),
-            "catalog": service.list_playlist_catalog(),
+            "library_pool": _library_pool_payload(uid),
+            "catalog": service.list_playlist_catalog(uid),
         }
     )
 
 
 @app.post("/api/playlists")
-async def api_create_playlist(body: CreatePlaylistBody):
+async def api_create_playlist(body: CreatePlaylistBody, request: Request):
+    uid = _owner_id(request, required=True)
     try:
-        pl = service.create_playlist(body.name.strip())
+        pl = service.create_playlist(body.name.strip(), uid)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     tiles = [f"/playlists/{pl.id}/tracks/{t.id}/cover" for t in pl.tracks[:4]]
@@ -412,9 +641,7 @@ async def api_create_playlist(body: CreatePlaylistBody):
 @app.get("/api/playlist/view")
 async def api_playlist_view(request: Request, playlist_id: str):
     """HTML fragment + track payload for in-page playlist switching (query param avoids path parsing issues)."""
-    pl = service.get_playlist(playlist_id)
-    if not pl:
-        raise HTTPException(status_code=404, detail="Playlist not found")
+    pl = _owned_playlist_or_404(request, playlist_id)
     await asyncio.to_thread(service.hydrate_media_paths, pl, fill_albums=False, persist=False)
     tracks_payload = [_track_payload_row(t) for t in pl.tracks]
     tpl = templates.env.get_template("partials/playlist_main.html")
@@ -422,7 +649,7 @@ async def api_playlist_view(request: Request, playlist_id: str):
         request=request,
         current=pl,
         current_cover_tiles=_cover_tiles_for_playlist(pl),
-        liked_playlist_id=DownloadService.LIKED_SONGS_PLAYLIST_ID,
+        liked_playlist_id=service.liked_songs_id_for(uid),
     )
     return JSONResponse(
         {"html": html, "tracks_payload": tracks_payload, "playlist_id": pl.id},
@@ -431,15 +658,14 @@ async def api_playlist_view(request: Request, playlist_id: str):
 
 @app.get("/api/playlist/recommendations")
 async def api_playlist_recommendations(
+    request: Request,
     playlist_id: str,
     background_tasks: BackgroundTasks,
     limit: int = 12,
     fresh: int = 0,
 ):
     """YouTube Mix from playlist seeds; same hit shape as `/api/search/songs`."""
-    pl = service.get_playlist(playlist_id.strip())
-    if not pl:
-        raise HTTPException(status_code=404, detail="Playlist not found")
+    pl = _owned_playlist_or_404(request, playlist_id)
     lim = max(1, min(int(limit), 30))
     seed_ids = [t.resolved_youtube_video_id() for t in (pl.tracks or [])]
     seed_key = ",".join(YoutubePlaylistMix().pick_seed_ids(seed_ids))
@@ -466,7 +692,7 @@ async def api_playlist_recommendations(
 
     out = [dict(h) for h in (cached_hits or [])][:lim]
     await streaming.annotate_search_stream_src(out)
-    _annotate_library_matches(out)
+    _annotate_library_matches(out, _owner_id(request))
     prefetch_ids = [str(h.get("video_id") or "") for h in out]
     background_tasks.add_task(streaming.prefetch_mix_stream_payloads, prefetch_ids)
     return JSONResponse(out)
@@ -474,6 +700,7 @@ async def api_playlist_recommendations(
 
 @app.get("/api/track/mix")
 async def api_track_mix(
+    request: Request,
     background_tasks: BackgroundTasks,
     vid: str = "",
     playlist_id: str = "",
@@ -487,9 +714,7 @@ async def api_track_mix(
     pid = (playlist_id or "").strip()
     tid = (track_id or "").strip()
     if pid and tid:
-        pl = service.get_playlist(pid)
-        if not pl:
-            raise HTTPException(status_code=404, detail="Playlist not found")
+        pl = _owned_playlist_or_404(request, pid)
         track = next((t for t in (pl.tracks or []) if str(t.id) == tid), None)
         if not track:
             raise HTTPException(status_code=404, detail="Track not found")
@@ -533,7 +758,7 @@ async def api_track_mix(
         out[0]["title"] = seed_title
         out[0]["artist"] = seed_artist or out[0].get("artist") or ""
     await streaming.annotate_search_stream_src(out)
-    _annotate_library_matches(out)
+    _annotate_library_matches(out, _owner_id(request))
     warm_ids: list[str] = []
     for hit in out:
         hid = str(hit.get("video_id") or "").strip()
@@ -550,7 +775,7 @@ async def api_track_mix(
 
 
 @app.get("/api/search/songs")
-async def api_search_songs(q: str = "", limit: int = 30, offset: int = 0, fresh: int = 0):
+async def api_search_songs(request: Request, q: str = "", limit: int = 30, offset: int = 0, fresh: int = 0):
     q = (q or "").strip()
     if len(q) < 2:
         raise HTTPException(status_code=400, detail="Query must be at least 2 characters.")
@@ -585,7 +810,7 @@ async def api_search_songs(q: str = "", limit: int = 30, offset: int = 0, fresh:
     hits = [dict(h) for h in hits_cache[start:end]]
     if hits:
         await streaming.annotate_search_stream_src(hits)
-        _annotate_library_matches(hits)
+        _annotate_library_matches(hits, _owner_id(request))
 
     return JSONResponse(
         {
@@ -729,9 +954,10 @@ async def api_stream_video(request: Request, vid: str, height: int = 0, kbps: in
 
 @app.post("/playlists")
 async def create_playlist(request: Request, name: str = Form(...)):
+    uid = _owner_id(request, required=True)
     wants_json = "application/json" in (request.headers.get("accept") or "").lower()
     try:
-        pl = service.create_playlist(name)
+        pl = service.create_playlist(name, uid)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if wants_json:
@@ -740,9 +966,10 @@ async def create_playlist(request: Request, name: str = Form(...)):
 
 
 @app.post("/playlists/import")
-async def import_spotify(spotify_url: str = Form(...)):
+async def import_spotify(request: Request, spotify_url: str = Form(...)):
+    uid = _owner_id(request, required=True)
     try:
-        pl = service.import_spotify_playlist(spotify_url)
+        pl = service.import_spotify_playlist(spotify_url, uid)
         return RedirectResponse(f"/?playlist_id={pl.id}", status_code=303)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -765,6 +992,7 @@ async def add_track(
     u = (url or "").strip() or None
     alb = (album or "").strip() or None
     dl_quality = (quality or "192").strip() or "192"
+    _owned_playlist_or_404(request, pid)
     wants_json = "application/json" in (request.headers.get("accept") or "").lower()
     try:
         track = service.add_track_to_playlist(
@@ -793,11 +1021,13 @@ async def add_track(
 
 @app.post("/playlists/{playlist_id}/tracks/{track_id}/download")
 async def start_download(
+    request: Request,
     playlist_id: str,
     track_id: str,
     redownload: Optional[str] = Form(None),
     quality: Optional[str] = Form(None),
 ):
+    _owned_playlist_or_404(request, playlist_id)
     pid = playlist_id.strip()
     tid = track_id.strip()
     force = (redownload or "").strip().lower() in ("1", "true", "yes", "on")
@@ -808,7 +1038,8 @@ async def start_download(
 
 
 @app.post("/playlists/{playlist_id}/tracks/{track_id}/delete")
-async def delete_track(playlist_id: str, track_id: str):
+async def delete_track(request: Request, playlist_id: str, track_id: str):
+    _owned_playlist_or_404(request, playlist_id)
     pid = playlist_id.strip()
     tid = track_id.strip()
     if not service.delete_track(pid, tid):
@@ -818,7 +1049,8 @@ async def delete_track(playlist_id: str, track_id: str):
 
 
 @app.post("/playlists/{playlist_id}/delete")
-async def delete_playlist(playlist_id: str):
+async def delete_playlist(request: Request, playlist_id: str):
+    _owned_playlist_or_404(request, playlist_id)
     pid = playlist_id.strip()
     if service.is_liked_songs_playlist(pid):
         raise HTTPException(status_code=403, detail="The Liked Songs playlist cannot be deleted.")
@@ -829,10 +1061,12 @@ async def delete_playlist(playlist_id: str):
 
 @app.post("/playlists/{playlist_id}/edit")
 async def edit_playlist(
+    request: Request,
     playlist_id: str,
     name: Optional[str] = Form(None),
     bio: Optional[str] = Form(None),
 ):
+    _owned_playlist_or_404(request, playlist_id)
     pid = playlist_id.strip()
     pl = service.get_playlist(pid)
     if not pl:
@@ -871,7 +1105,8 @@ async def edit_playlist(
 
 
 @app.get("/playlists/{playlist_id}/tracks/{track_id}/cover")
-async def track_cover(playlist_id: str, track_id: str, q: str = "high"):
+async def track_cover(playlist_id: str, track_id: str, request: Request, q: str = "high"):
+    _owned_playlist_or_404(request, playlist_id)
     pid = playlist_id.strip()
     tid = track_id.strip()
     tier = YoutubeThumbQuality.parse(q)
@@ -956,15 +1191,16 @@ class LrcSaveBody(BaseModel):
 
 
 @app.get("/playlists/{playlist_id}/tracks/{track_id}/lyrics")
-def track_lyrics(playlist_id: str, track_id: str):
-    pl = service.get_playlist(playlist_id.strip())
-    if not pl or not pl.get_track(track_id.strip()):
+def track_lyrics(playlist_id: str, track_id: str, request: Request):
+    _owned_playlist_or_404(request, playlist_id)
+    if not service.get_playlist(playlist_id.strip()).get_track(track_id.strip()):
         raise HTTPException(status_code=404, detail="Playlist or track not found")
     return JSONResponse(lyrics_service.get_lyrics_payload(playlist_id, track_id))
 
 
 @app.post("/playlists/{playlist_id}/tracks/{track_id}/lyrics")
-async def track_lyrics_save(playlist_id: str, track_id: str, body: LyricsSaveBody):
+async def track_lyrics_save(request: Request, playlist_id: str, track_id: str, body: LyricsSaveBody):
+    _owned_playlist_or_404(request, playlist_id)
     pl = service.get_playlist(playlist_id.strip())
     if not pl or not pl.get_track(track_id.strip()):
         raise HTTPException(status_code=404, detail="Playlist or track not found")
@@ -977,8 +1213,9 @@ async def track_lyrics_save(playlist_id: str, track_id: str, body: LyricsSaveBod
 
 
 @app.post("/playlists/{playlist_id}/tracks/{track_id}/lyrics/lrc")
-async def track_lrc_save(playlist_id: str, track_id: str, body: LrcSaveBody):
+async def track_lrc_save(request: Request, playlist_id: str, track_id: str, body: LrcSaveBody):
     """Save LRC lyrics with timestamps."""
+    _owned_playlist_or_404(request, playlist_id)
     pl = service.get_playlist(playlist_id.strip())
     if not pl or not pl.get_track(track_id.strip()):
         raise HTTPException(status_code=404, detail="Playlist or track not found")
@@ -991,9 +1228,10 @@ async def track_lrc_save(playlist_id: str, track_id: str, body: LrcSaveBody):
 
 
 @app.post("/api/downloads/retry-all-errors")
-async def api_retry_all_errors():
+async def api_retry_all_errors(request: Request):
     """Re-queue all tracks that are in error state (any playlist)."""
-    n = service.retry_all_error_tracks()
+    uid = _owner_id(request, required=True)
+    n = service.retry_all_error_tracks(uid)
     return JSONResponse({"ok": True, "queued": n})
 
 
@@ -1005,8 +1243,9 @@ def _unlink_quiet(path: Path) -> None:
 
 
 @app.get("/playlists/{playlist_id}/tracks/{track_id}/file")
-async def export_track_file(playlist_id: str, track_id: str):
+async def export_track_file(playlist_id: str, track_id: str, request: Request):
     """Browser download of one track's audio file."""
+    _owned_playlist_or_404(request, playlist_id)
     result = await asyncio.to_thread(export_service.get_track_export, playlist_id, track_id)
     if not result:
         raise HTTPException(
@@ -1023,11 +1262,10 @@ async def export_track_file(playlist_id: str, track_id: str):
 
 
 @app.get("/playlists/{playlist_id}/export.zip")
-async def export_playlist_zip(playlist_id: str):
+async def export_playlist_zip(playlist_id: str, request: Request):
     """Browser download of a ZIP of all downloaded tracks in the playlist."""
+    _owned_playlist_or_404(request, playlist_id)
     pid = playlist_id.strip()
-    if not service.get_playlist(pid):
-        raise HTTPException(status_code=404, detail="Playlist not found")
 
     built = await asyncio.to_thread(export_service.build_playlist_export_zip, pid)
     if not built:
@@ -1050,8 +1288,9 @@ class QualityDownloadBody(BaseModel):
 
 
 @app.post("/api/playlists/{playlist_id}/downloads/quality")
-async def api_playlist_quality_downloads(playlist_id: str, body: QualityDownloadBody):
+async def api_playlist_quality_downloads(playlist_id: str, body: QualityDownloadBody, request: Request):
     """Queue downloads for every track in a playlist missing the given quality variant."""
+    _owned_playlist_or_404(request, playlist_id)
     result = service.queue_playlist_quality_downloads(playlist_id, body.quality)
     if result is None:
         raise HTTPException(status_code=404, detail="Playlist not found")
@@ -1059,24 +1298,26 @@ async def api_playlist_quality_downloads(playlist_id: str, body: QualityDownload
 
 
 @app.post("/api/downloads/quality-all")
-async def api_quality_downloads_all(body: QualityDownloadBody):
+async def api_quality_downloads_all(body: QualityDownloadBody, request: Request):
     """Queue missing quality variants for every track in every playlist."""
-    result = service.queue_all_quality_downloads(body.quality)
+    uid = _owner_id(request, required=True)
+    result = service.queue_all_quality_downloads(body.quality, uid)
     return JSONResponse({"ok": True, **result})
 
 
 @app.post("/api/downloads/reload")
-async def api_reload_library():
+async def api_reload_library(request: Request):
     """Re-download every track at both tiers and delete every other format."""
+    uid = _owner_id(request, required=True)
     # Enqueues per-track work with file I/O; keep it off the event loop.
-    result = await run_in_threadpool(service.reload_library_all_qualities)
+    result = await run_in_threadpool(service.reload_library_all_qualities, uid)
     return JSONResponse({"ok": True, **result})
 
 
 @app.get("/api/progress")
-async def api_progress():
+async def api_progress(request: Request):
     """Live per-track download progress plus how many downloads are left in the queue."""
-    return JSONResponse(service.progress_api_payload())
+    return JSONResponse(service.progress_api_payload(_owner_id(request)))
 
 
 _manifest_path = _webapp_dir / "manifest.json"
@@ -1146,12 +1387,14 @@ media_server = MediaServer(_media_root, root)
 
 
 @app.get("/api/media/prepare")
-async def api_media_prepare(path: str):
+async def api_media_prepare(path: str, request: Request):
     """Metadata (ext/size/duration) for sliced local playback via MSE."""
+    _auth_user(request, required=True)
     return JSONResponse(await asyncio.to_thread(media_server.prepare, path))
 
 
 @app.get("/media/{media_path:path}")
 async def serve_media(media_path: str, request: Request):
+    _auth_user(request, required=True)
     sliced = request.query_params.get("sliced") == "1"
     return media_server.serve(media_path, request, sliced=sliced)

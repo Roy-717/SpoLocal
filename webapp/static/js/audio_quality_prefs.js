@@ -60,8 +60,19 @@
         return playbackKbps();
     }
 
+    // Mirror the tier into a cookie so the server can render the right cover
+    // URL (YouTube thumb in Data Saver) instead of a local cover that JS then
+    // replaces, which made the browser fetch every cover twice.
+    function syncTierCookie(kbps) {
+        try {
+            document.cookie = 'spolocal_playback_kbps=' + encodeURIComponent(String(snapKbps(kbps)))
+                + '; path=/; max-age=31536000; SameSite=Lax';
+        } catch (e) {}
+    }
+
     function setPlaybackKbps(kbps) {
         try { localStorage.setItem(LS_PLAYBACK_KBPS, String(snapKbps(kbps))); } catch (e) {}
+        syncTierCookie(kbps);
         try { window.dispatchEvent(new CustomEvent('spolocal:playback-quality-changed')); } catch (e) {}
     }
 
@@ -217,6 +228,8 @@
             return '';
         }
     }
+
+    syncTierCookie(playbackKbps());
 
     window.SpolocalCoverUrls = new SpolocalCoverUrls();
     window.SpolocalQualityPrefs = {

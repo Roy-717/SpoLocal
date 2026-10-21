@@ -316,6 +316,9 @@ class AppShellController {
     }
 
     async afterTrackAddedToPlaylist(plId) {
+        if (typeof window.invalidatePlaylistViewCache === 'function') {
+            window.invalidatePlaylistViewCache(plId);
+        }
         await this.reloadPlaylistsCatalog();
         this.renderSidebarPlaylistList(plId);
         const cur = window.__spaPlaylistId || new URL(location.href).searchParams.get('playlist_id') || '';
@@ -380,11 +383,25 @@ class AppShellController {
         return data;
     }
 
-    static async createPlaylistFromAtp(name) {
+    static async createPlaylistFromAtp(name, hit) {
+        const body = { name: name };
+        if (hit) {
+            body.title = hit.title || '';
+            body.artist = hit.artist || hit.channel || '';
+            body.url = hit.url || '';
+            body.album = hit.album || '';
+            body.video_id = hit.video_id || '';
+            body.quality = String(window.SpolocalQualityPrefs ? window.SpolocalQualityPrefs.downloadKbps() : '192');
+            const lib = Array.isArray(hit.library_matches) ? hit.library_matches : [];
+            if (lib.length && lib[0].playlist_id && lib[0].track_id) {
+                body.source_playlist_id = String(lib[0].playlist_id);
+                body.source_track_id = String(lib[0].track_id);
+            }
+        }
         const r = await fetch('/api/playlists', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ name: name }),
+            body: JSON.stringify(body),
         });
         return AppShellController.parseJsonApiResponse(r, 'Could not create playlist.');
     }
@@ -1393,6 +1410,10 @@ class AppShellController {
         window.closeGlobalSearch = () => this.closeGlobalSearch();
         window.loadPlaylistRecommendations = (pid) => this.loadPlaylistRecommendations(pid);
         window.refreshSidebarPlaylistList = async (activePlaylistId) => {
+            // A finished download changes track status/variants; drop cached views.
+            if (typeof window.invalidatePlaylistViewCache === 'function') {
+                window.invalidatePlaylistViewCache();
+            }
             const changed = await this.reloadPlaylistsCatalog();
             const pid = activePlaylistId != null ? activePlaylistId : (window.__spaPlaylistId || '');
             // Rebuilding the list recreates every <img>; skip it when nothing changed.
@@ -1433,11 +1454,13 @@ class AppShellController {
                 const submitBtn = this.atpNewForm.querySelector('button[type="submit"]');
                 if (submitBtn) submitBtn.disabled = true;
                 try {
-                    const created = await AppShellController.createPlaylistFromAtp(name);
+                    const hit = this.pendingAddHit;
+                    const created = await AppShellController.createPlaylistFromAtp(name, hit);
                     const plId = created && created.playlist && created.playlist.id;
                     if (!plId) throw new Error('Could not create playlist.');
-                    if (this.pendingAddHit) {
-                        await this.addTrackToPlaylist(plId, this.pendingAddHit);
+                    if (hit) {
+                        // The server already added the track and queued its download.
+                        await this.afterTrackAddedToPlaylist(plId);
                         this.closeAddToPlaylistPopover();
                     } else {
                         await this.reloadPlaylistsCatalog();

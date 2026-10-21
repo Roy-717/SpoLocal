@@ -90,6 +90,84 @@ class TestAuthRoutes:
         assert "password_hash" not in user
 
 
+class TestCreatePlaylistWithTrack:
+    def test_creates_playlist_and_queues_download(self, client, service, logged_in) -> None:
+        _, user_id = logged_in
+        resp = client.post(
+            "/api/playlists",
+            json={
+                "name": "Fresh",
+                "title": "Song",
+                "artist": "Artist",
+                "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "quality": "64",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        pl = service.get_playlist_for_user(body["playlist"]["id"], user_id)
+        assert pl is not None
+        assert [t.title for t in pl.tracks] == ["Song"]
+        track = pl.tracks[0]
+        assert track.status == DownloadStatus.queued
+        assert (track.id, "64") in service._pending_job_keys
+        assert body["track"]["id"] == track.id
+
+    def test_video_id_is_used_when_url_is_missing(self, client, service, logged_in) -> None:
+        _, user_id = logged_in
+        resp = client.post(
+            "/api/playlists",
+            json={"name": "Fresh", "title": "Song", "artist": "Artist", "video_id": "dQw4w9WgXcQ"},
+        )
+        assert resp.status_code == 200, resp.text
+        pl = service.get_playlist_for_user(resp.json()["playlist"]["id"], user_id)
+        assert pl.tracks[0].youtube_video_id == "dQw4w9WgXcQ"
+        assert (pl.tracks[0].id, "192") in service._pending_job_keys
+
+    def test_plain_create_still_works(self, client, service, logged_in) -> None:
+        _, user_id = logged_in
+        resp = client.post("/api/playlists", json={"name": "Empty"})
+        assert resp.status_code == 200
+        assert resp.json()["track"] is None
+        pl = service.get_playlist_for_user(resp.json()["playlist"]["id"], user_id)
+        assert pl.tracks == []
+
+
+class TestCoverTier:
+    def test_data_saver_catalog_uses_youtube_thumbs(self, client, service, logged_in) -> None:
+        _, user_id = logged_in
+        pl = make_playlist(service, "Mine", user_id, tracks=1)
+        pl.tracks[0].youtube_video_id = "dQw4w9WgXcQ"
+        client.cookies.set("spolocal_playback_kbps", "64")
+        rows = client.get("/api/playlists/catalog").json()
+        assert rows[0]["cover_tiles"] == ["/api/thumb?vid=dQw4w9WgXcQ&q=low"]
+
+    def test_highest_catalog_uses_local_covers(self, client, service, logged_in) -> None:
+        _, user_id = logged_in
+        pl = make_playlist(service, "Mine", user_id, tracks=1)
+        pl.tracks[0].youtube_video_id = "dQw4w9WgXcQ"
+        client.cookies.set("spolocal_playback_kbps", "192")
+        rows = client.get("/api/playlists/catalog").json()
+        assert rows[0]["cover_tiles"] == [f"/playlists/{pl.id}/tracks/{pl.tracks[0].id}/cover"]
+
+    def test_data_saver_view_html_uses_youtube_thumbs(self, client, service, logged_in) -> None:
+        _, user_id = logged_in
+        pl = make_playlist(service, "Mine", user_id, tracks=1)
+        pl.tracks[0].youtube_video_id = "dQw4w9WgXcQ"
+        client.cookies.set("spolocal_playback_kbps", "64")
+        html = client.get(f"/api/playlist/view?playlist_id={pl.id}").json()["html"]
+        assert "/api/thumb?vid=dQw4w9WgXcQ&q=low" in html
+
+    def test_index_renders_playlist_with_data_saver_cookie(self, client, service, logged_in) -> None:
+        _, user_id = logged_in
+        pl = make_playlist(service, "Mine", user_id, tracks=1)
+        pl.tracks[0].youtube_video_id = "dQw4w9WgXcQ"
+        client.cookies.set("spolocal_playback_kbps", "64")
+        resp = client.get(f"/?playlist_id={pl.id}")
+        assert resp.status_code == 200
+        assert "/api/thumb?vid=dQw4w9WgXcQ&q=low" in resp.text
+
+
 class TestOwnership:
     def test_catalog_only_lists_own_playlists(self, client, service, logged_in) -> None:
         _, user_id = logged_in

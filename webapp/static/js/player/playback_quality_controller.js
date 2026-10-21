@@ -105,9 +105,13 @@ export class PlaybackQualityController {
         const prefs = window.SpolocalQualityPrefs;
         const q = prefs ? String(prefs.clampKbps(kbps)) : String(kbps);
         const deadline = Date.now() + 300000;
+        const nav_gen = this.state.hub._navGen;
         let saw_job = false;
         while (Date.now() < deadline) {
             if (play_gen != null && play_gen !== this.transport._playGeneration) return false;
+            // Switching playlists must stop this poll; the download keeps running
+            // server-side and is picked up again when the track is played.
+            if (nav_gen !== this.state.hub._navGen) return false;
             const row = await this.fetchTrackPayload(playlist_id, track_id);
             if (row && prefs && prefs.hasVariant(row, q)) {
                 this.patchTrackInHub(row);

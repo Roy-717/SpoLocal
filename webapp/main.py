@@ -12,6 +12,7 @@ import time
 import mimetypes
 import shlex
 import tempfile
+from urllib.parse import quote
 from dotenv import load_dotenv
 import asyncio
 
@@ -196,8 +197,24 @@ def _unlink_track_cover_caches(playlist_id: str, track_id: str) -> None:
         pass
 
 
-def _cover_tiles_for_playlist(pl: Playlist) -> list[str]:
-    return [f"/playlists/{pl.id}/tracks/{t.id}/cover" for t in pl.tracks[:4]]
+def _playback_cover_tier(request: Request) -> str:
+    """Data Saver rows use YouTube thumbs, so the server can render them directly."""
+    raw = (request.cookies.get("spolocal_playback_kbps") or "").strip()
+    try:
+        return "low" if int(raw) <= 64 else "high"
+    except ValueError:
+        return "high"
+
+
+def _cover_tiles_for_playlist(pl: Playlist, tier: str = "high") -> list[str]:
+    tiles: list[str] = []
+    for t in pl.tracks[:4]:
+        vid = t.resolved_youtube_video_id() if tier == "low" else ""
+        if vid:
+            tiles.append(f"/api/thumb?vid={quote(vid, safe='')}&q=low")
+        else:
+            tiles.append(f"/playlists/{pl.id}/tracks/{t.id}/cover")
+    return tiles
 
 
 def _library_pool_payload(owner_id: Optional[str] = None) -> list[dict[str, Any]]:
@@ -253,7 +270,7 @@ async def index(request: Request, playlist_id: Optional[str] = None):
         else:
             await asyncio.to_thread(service.hydrate_media_paths, current, fill_albums=False, persist=False)
             current_tracks_payload = [_track_payload_row(t) for t in current.tracks]
-            current_cover_tiles = _cover_tiles_for_playlist(current)
+            current_cover_tiles = _cover_tiles_for_playlist(current, _playback_cover_tier(request))
 
     if is_home:
         for pl in playlists:
@@ -261,18 +278,20 @@ async def index(request: Request, playlist_id: Optional[str] = None):
         home_library_pool = _library_pool_payload(uid)
 
     nav_current = None if is_home else (current.id if current else None)
-    playlist_nav = service.list_playlist_nav(nav_current, uid)
-    playlist_catalog = service.list_playlist_catalog(uid)
+    cover_tier = _playback_cover_tier(request)
+    playlist_nav = service.list_playlist_nav(nav_current, uid, cover_tier)
+    playlist_catalog = service.list_playlist_catalog(uid, cover_tier)
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
-            "request": request,
             "playlist_nav": playlist_nav,
             "playlist_catalog": playlist_catalog,
             "current": current,
             "is_home": is_home,
             "current_cover_tiles": current_cover_tiles,
             "current_tracks_payload": current_tracks_payload,
+            "cover_tier": cover_tier,
             "home_library_pool": home_library_pool,
             "service": service,
             "liked_playlist_id": service.liked_songs_id_for(uid),
@@ -503,7 +522,7 @@ async def api_player_commands_poll(request: Request, device_id: str = Query(...,
 
 @app.get("/api/playlists/catalog")
 async def api_playlists_catalog(request: Request):
-    return JSONResponse(service.list_playlist_catalog(_owner_id(request)))
+    return JSONResponse(service.list_playlist_catalog(_owner_id(request), _playback_cover_tier(request)))
 
 
 @app.get("/api/liked-keys")
@@ -513,6 +532,16 @@ async def api_liked_keys(request: Request):
 
 class CreatePlaylistBody(BaseModel):
     name: str = Field(..., min_length=1)
+    # Optional first track: creating a playlist from a search hit adds and
+    # downloads it in the same request, so it can never end up empty.
+    title: Optional[str] = Field(None, max_length=300)
+    artist: Optional[str] = Field(None, max_length=300)
+    url: Optional[str] = None
+    album: Optional[str] = Field(None, max_length=300)
+    video_id: Optional[str] = None
+    quality: Optional[str] = None
+    source_playlist_id: Optional[str] = None
+    source_track_id: Optional[str] = None
 
 
 class TrackLikeBody(BaseModel):
@@ -611,7 +640,7 @@ async def api_home_view(request: Request):
             "html": html,
             "view": "home",
             "library_pool": _library_pool_payload(uid),
-            "catalog": service.list_playlist_catalog(uid),
+            "catalog": service.list_playlist_catalog(uid, _playback_cover_tier(request)),
         }
     )
 
@@ -623,7 +652,26 @@ async def api_create_playlist(body: CreatePlaylistBody, request: Request):
         pl = service.create_playlist(body.name.strip(), uid)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    tiles = [f"/playlists/{pl.id}/tracks/{t.id}/cover" for t in pl.tracks[:4]]
+    track = None
+    first_title = (body.title or "").strip()
+    if first_title:
+        try:
+            track = service.add_track_to_playlist(
+                pl.id,
+                first_title,
+                (body.artist or "").strip(),
+                url=(body.url or "").strip() or None,
+                album=(body.album or "").strip() or None,
+                enqueue_download=True,
+                download_quality=(body.quality or "192").strip() or "192",
+                owner_id=uid,
+                source_playlist_id=(body.source_playlist_id or "").strip() or None,
+                source_track_id=(body.source_track_id or "").strip() or None,
+                video_id=(body.video_id or "").strip() or None,
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    tiles = _cover_tiles_for_playlist(pl, _playback_cover_tier(request))
     return JSONResponse(
         {
             "ok": True,
@@ -634,6 +682,7 @@ async def api_create_playlist(body: CreatePlaylistBody, request: Request):
                 "cover_tiles": tiles,
                 "system_locked": False,
             },
+            "track": _track_payload_row(track) if track else None,
         }
     )
 
@@ -646,10 +695,12 @@ async def api_playlist_view(request: Request, playlist_id: str):
     await asyncio.to_thread(service.hydrate_media_paths, pl, fill_albums=False, persist=False)
     tracks_payload = [_track_payload_row(t) for t in pl.tracks]
     tpl = templates.env.get_template("partials/playlist_main.html")
+    cover_tier = _playback_cover_tier(request)
     html = tpl.render(
         request=request,
         current=pl,
-        current_cover_tiles=_cover_tiles_for_playlist(pl),
+        current_cover_tiles=_cover_tiles_for_playlist(pl, cover_tier),
+        cover_tier=cover_tier,
         liked_playlist_id=service.liked_songs_id_for(uid),
     )
     return JSONResponse(

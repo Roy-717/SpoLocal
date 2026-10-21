@@ -18,6 +18,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
+from urllib.parse import quote
 from uuid import uuid4
 
 import yt_dlp
@@ -943,11 +944,24 @@ class DownloadService:
         root_dl = (self.root / "downloads").resolve()
         return newest.resolve().relative_to(root_dl).as_posix()
 
-    def list_playlist_catalog(self, owner_id: Optional[str] = None) -> List[dict]:
+    @staticmethod
+    def _cover_tiles(pl: Playlist, cover_tier: str = "high") -> List[str]:
+        """Data Saver tiles use YouTube thumbs so the server never renders a
+        local cover that the client immediately replaces."""
+        tiles: List[str] = []
+        for t in pl.tracks[:4]:
+            vid = t.resolved_youtube_video_id() if cover_tier == "low" else ""
+            if vid:
+                tiles.append(f"/api/thumb?vid={quote(vid, safe='')}&q=low")
+            else:
+                tiles.append(f"/playlists/{pl.id}/tracks/{t.id}/cover")
+        return tiles
+
+    def list_playlist_catalog(self, owner_id: Optional[str] = None, cover_tier: str = "high") -> List[dict]:
         """Lightweight list for /api/playlists/catalog (Add to playlist, etc.)."""
         rows: List[dict] = []
         for pl in self.list_playlists_for_user(owner_id):
-            tiles = [f"/playlists/{pl.id}/tracks/{t.id}/cover" for t in pl.tracks[:4]]
+            tiles = self._cover_tiles(pl, cover_tier)
             rows.append(
                 {
                     "id": pl.id,
@@ -959,12 +973,12 @@ class DownloadService:
             )
         return rows
 
-    def list_playlist_nav(self, current_id: Optional[str], owner_id: Optional[str] = None) -> List[dict]:
+    def list_playlist_nav(self, current_id: Optional[str], owner_id: Optional[str] = None, cover_tier: str = "high") -> List[dict]:
         """Sidebar rows: id, name, cover_tiles, active (avoids passing full playlist objects to the template)."""
         cur = (current_id or "").strip()
         rows: List[dict] = []
         for pl in self.list_playlists_for_user(owner_id):
-            tiles = [f"/playlists/{pl.id}/tracks/{t.id}/cover" for t in pl.tracks[:4]]
+            tiles = self._cover_tiles(pl, cover_tier)
             rows.append(
                 {
                     "id": pl.id,
@@ -1856,6 +1870,7 @@ class DownloadService:
         owner_id: Optional[str] = None,
         source_playlist_id: Optional[str] = None,
         source_track_id: Optional[str] = None,
+        video_id: Optional[str] = None,
     ) -> Track:
         pl = self.get_playlist(playlist_id)
         if not pl:
@@ -1865,7 +1880,9 @@ class DownloadService:
         title_s = (title or "").strip()
         artist_s = (artist or "").strip()
         u = (url or "").strip() or None
-        yid = youtube_video_id_from_url(u) or ""
+        # Search hits carry a video id even when the URL is missing; without it
+        # the queued download has nothing to resolve.
+        yid = youtube_video_id_from_url(u) or (video_id or "").strip()
 
         canon: Optional[tuple[str, str]] = None
         sp = (source_playlist_id or "").strip()

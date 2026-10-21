@@ -2,7 +2,7 @@ import { PlaylistTransportController } from '../player/transport_controller.js?v
 import { PlaylistLikeController } from '../player/like_controller.js?v=1';
 import { PlaylistShuffleController } from '../player/shuffle_controller.js?v=1';
 import { PlaylistMediaSessionController } from '../player/media_session_controller.js?v=1';
-import { PlaybackQualityController } from '../player/playback_quality_controller.js?v=2';
+import { PlaybackQualityController } from '../player/playback_quality_controller.js?v=3';
 import { PlaylistQueueController } from '../player/queue_controller.js?v=90';
 import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=90';
 import { PlaylistEditModalController } from '../ui/edit_modal_controller.js';
@@ -46,6 +46,12 @@ export class PlaylistSessionController {
         this.trackInfo = new TrackInfoController(state);
         this.trackEdit = new TrackEditController(state);
         this.songMix = new SongMixController(state);
+
+        // SPA navigation: abort the previous view request and reuse a recent
+        // response so clicking back and forth does not re-fetch every time.
+        this._navAbort = null;
+        this._viewCache = new Map();
+        this.VIEW_CACHE_MS = 15000;
 
         // Wire cross-controller references so each controller can call its peers
         this.shuffle.setQueueRef(this.queue);
@@ -408,6 +414,9 @@ export class PlaylistSessionController {
         }
         hub.isHomeView = false;
         hub.songMixView = false;
+        // Only a real navigation invalidates in-flight variant polling; a
+        // re-render after a download must not stop it.
+        if (hub.playlistId !== data.playlist_id) hub._navGen = (hub._navGen || 0) + 1;
         hub.playlistId = data.playlist_id;
         try { window.__spaPlaylistId = hub.playlistId; } catch (e) {}
         hub.tracks = data.tracks_payload || [];
@@ -456,6 +465,7 @@ export class PlaylistSessionController {
 
     applySpaHome(data) {
         const hub = this.state.hub;
+        if (!hub.isHomeView) hub._navGen = (hub._navGen || 0) + 1;
         hub.isHomeView = true;
         hub.songMixView = false;
         hub.playlistId = null;
@@ -495,30 +505,54 @@ export class PlaylistSessionController {
         }
     }
 
+    invalidateViewCache(playlistId) {
+        if (playlistId == null) this._viewCache.clear();
+        else this._viewCache.delete(String(playlistId));
+    }
+
+    _applyNavigation(data, pid, pushHistory, onLoaded) {
+        this.applySpaPlaylist(data);
+        if (pushHistory) {
+            history.pushState({ playlistId: pid }, '', '/?playlist_id=' + encodeURIComponent(pid));
+        }
+        if (typeof onLoaded === 'function') {
+            requestAnimationFrame(() => {
+                onLoaded();
+            });
+        }
+    }
+
     async navigatePlaylist(pid, pushHistory, onLoaded) {
         const hub = this.state.hub;
         if (!pid) return;
         if (pid === hub.playlistId && !hub.songMixView) return;
         hub.songMixView = false;
         this.hideLyricsIfOpen();
+
+        const cached = this._viewCache.get(String(pid));
+        if (cached && Date.now() - cached.ts < this.VIEW_CACHE_MS) {
+            this._applyNavigation(cached.data, pid, pushHistory, onLoaded);
+            return;
+        }
+
+        if (this._navAbort) this._navAbort.abort();
+        const ac = new AbortController();
+        this._navAbort = ac;
         try {
-            const r = await fetch('/api/playlist/view?playlist_id=' + encodeURIComponent(pid));
+            const r = await fetch('/api/playlist/view?playlist_id=' + encodeURIComponent(pid), { signal: ac.signal });
             if (!r.ok) {
                 window.location.href = '/?playlist_id=' + encodeURIComponent(pid);
                 return;
             }
             const data = await r.json();
-            this.applySpaPlaylist(data);
-            if (pushHistory) {
-                history.pushState({ playlistId: pid }, '', '/?playlist_id=' + encodeURIComponent(pid));
-            }
-            if (typeof onLoaded === 'function') {
-                requestAnimationFrame(() => {
-                    onLoaded();
-                });
-            }
+            if (ac.signal.aborted) return;
+            this._viewCache.set(String(pid), { data: data, ts: Date.now() });
+            this._applyNavigation(data, pid, pushHistory, onLoaded);
         } catch (x) {
+            if (x && x.name === 'AbortError') return;
             window.location.href = '/?playlist_id=' + encodeURIComponent(pid);
+        } finally {
+            if (this._navAbort === ac) this._navAbort = null;
         }
     }
 
@@ -633,6 +667,7 @@ export class PlaylistSessionController {
                 };
                 window.applySpaPlaylist = (data) => self.applySpaPlaylist(data);
                 window.applySpaHome = (data) => self.applySpaHome(data);
+                window.invalidatePlaylistViewCache = (pid) => self.invalidateViewCache(pid);
             }
         } catch (e) {}
     }

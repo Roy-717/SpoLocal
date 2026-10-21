@@ -77,8 +77,9 @@
                         {% endif %}
                     </td>
                     <td class="py-2 pl-1 pr-3 align-middle">
+                        {% set cover_vid = track.resolved_youtube_video_id() if cover_tier | default('high') == 'low' else '' %}
                         <div class="h-10 w-10 overflow-hidden rounded bg-[#1a1a1a]" aria-hidden="true">
-                            <img src="/playlists/{{ current.id }}/tracks/{{ track.id }}/cover"
+                            <img src="{% if cover_vid %}/api/thumb?vid={{ cover_vid | urlencode }}&q=low{% else %}/playlists/{{ current.id }}/tracks/{{ track.id }}/cover{% endif %}"
                                  alt=""
                                  loading="lazy"
                                  decoding="async"

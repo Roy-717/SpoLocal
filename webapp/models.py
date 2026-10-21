@@ -63,6 +63,9 @@ class Track:
     # When this row lives in the Liked Songs playlist, references the original list + track id.
     liked_source_playlist_id: Optional[str] = None
     liked_source_track_id: Optional[str] = None
+    # Playlist alias: same audio file as another track row (no re-download).
+    media_source_playlist_id: Optional[str] = None
+    media_source_track_id: Optional[str] = None
 
     @classmethod
     def create(cls, title: str, artist: str, url: Optional[str] = None) -> "Track":

@@ -774,6 +774,21 @@ async def api_track_mix(
     return JSONResponse({"seed": seed, "hits": out})
 
 
+@app.get("/api/spotify/resolve")
+async def api_spotify_resolve(url: str = Query(..., min_length=8)):
+    """Resolve a Spotify track link to a YouTube search query (top bar -> search UI)."""
+    try:
+        q = await run_in_threadpool(service.spotify_url_search_query, url.strip())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not q:
+        raise HTTPException(
+            status_code=400,
+            detail="Only Spotify track links can be opened as search. Use playlist import for playlists.",
+        )
+    return JSONResponse({"kind": "track", "search_query": q})
+
+
 @app.get("/api/search/songs")
 async def api_search_songs(request: Request, q: str = "", limit: int = 30, offset: int = 0, fresh: int = 0):
     q = (q or "").strip()
@@ -985,6 +1000,8 @@ async def add_track(
     album: Optional[str] = Form(None),
     skip_download: Optional[str] = Form(None),
     quality: Optional[str] = Form(None),
+    source_playlist_id: Optional[str] = Form(None),
+    source_track_id: Optional[str] = Form(None),
 ):
     pid = playlist_id.strip()
     raw = (skip_download or "").strip().lower()
@@ -992,6 +1009,7 @@ async def add_track(
     u = (url or "").strip() or None
     alb = (album or "").strip() or None
     dl_quality = (quality or "192").strip() or "192"
+    uid = _owner_id(request, required=True)
     _owned_playlist_or_404(request, pid)
     wants_json = "application/json" in (request.headers.get("accept") or "").lower()
     try:
@@ -1003,6 +1021,9 @@ async def add_track(
             album=alb,
             enqueue_download=not skip,
             download_quality=dl_quality,
+            owner_id=uid,
+            source_playlist_id=(source_playlist_id or "").strip() or None,
+            source_track_id=(source_track_id or "").strip() or None,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Playlist not found")

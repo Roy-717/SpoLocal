@@ -127,6 +127,30 @@ class AppShellController {
         return /^https?:\/\//i.test(s) || /^spotify:/i.test(s);
     }
 
+    /** @returns {'track'|'playlist'|null} */
+    static spotifyUrlKind(s) {
+        const t = String(s || '').trim();
+        if (!t) return null;
+        if (/open\.spotify\.com\/(?:intl-[a-z]{2}\/)?track(?:\/|$)/i.test(t) || /^spotify:track:/i.test(t)) {
+            return 'track';
+        }
+        if (/open\.spotify\.com\/(?:intl-[a-z]{2}\/)?playlist(?:\/|$)/i.test(t) || /^spotify:playlist:/i.test(t)) {
+            return 'playlist';
+        }
+        return null;
+    }
+
+    async resolveSpotifyTrackAndSearch(spotifyUrl) {
+        const r = await fetch('/api/spotify/resolve?url=' + encodeURIComponent(spotifyUrl.trim()), {
+            headers: { Accept: 'application/json' },
+        });
+        const data = await AppShellController.parseJsonApiResponse(r, 'Could not read that Spotify link.');
+        const q = data && data.search_query ? String(data.search_query).trim() : '';
+        if (!q) throw new Error('No search query from Spotify.');
+        if (this.topInput) this.topInput.value = q;
+        await this.runGlobalSearch(q);
+    }
+
     static withCoverCacheBust(url, bust) {
         if (!url) return url;
         try {
@@ -299,6 +323,12 @@ class AppShellController {
         fd.append('artist', hit.artist || hit.channel || '');
         fd.append('url', hit.url || '');
         fd.append('album', hit.album || '');
+        const lib = Array.isArray(hit.library_matches) ? hit.library_matches : [];
+        const src = lib.length ? lib[0] : null;
+        if (src && src.playlist_id && src.track_id) {
+            fd.append('source_playlist_id', String(src.playlist_id));
+            fd.append('source_track_id', String(src.track_id));
+        }
         const q = window.SpolocalQualityPrefs ? String(window.SpolocalQualityPrefs.downloadKbps()) : '192';
         fd.append('quality', q);
         const r = await fetch('/playlists/' + encodeURIComponent(plId) + '/tracks', {
@@ -1451,6 +1481,19 @@ class AppShellController {
                 if (!AppShellController.isUrl(val)) {
                     e.preventDefault();
                     this.runGlobalSearch(val);
+                    return;
+                }
+                if (AppShellController.spotifyUrlKind(val) === 'track') {
+                    e.preventDefault();
+                    void this.resolveSpotifyTrackAndSearch(val).catch((err) => {
+                        const msg = err && err.message ? err.message : 'Could not open Spotify track.';
+                        if (this.gPanel) this.gPanel.classList.remove('hidden');
+                        if (this.gLabel) this.gLabel.textContent = 'Search';
+                        if (this.gMsg) {
+                            this.gMsg.textContent = msg;
+                            this.gMsg.classList.remove('hidden');
+                        }
+                    });
                 }
             });
         }

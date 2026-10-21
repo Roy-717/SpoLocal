@@ -130,6 +130,8 @@ def _track_from_dict(raw: dict) -> Track:
     data.setdefault("loudness_gain_db", None)
     data.setdefault("liked_source_playlist_id", None)
     data.setdefault("liked_source_track_id", None)
+    data.setdefault("media_source_playlist_id", None)
+    data.setdefault("media_source_track_id", None)
     return Track(**data)
 
 
@@ -300,6 +302,8 @@ class DownloadService:
                             "loudness_gain_db": t.loudness_gain_db,
                             "liked_source_playlist_id": t.liked_source_playlist_id,
                             "liked_source_track_id": t.liked_source_track_id,
+                            "media_source_playlist_id": t.media_source_playlist_id,
+                            "media_source_track_id": t.media_source_track_id,
                         }
                         for t in pl.tracks
                     ],
@@ -661,9 +665,13 @@ class DownloadService:
             return None
         return pl
 
-    def _liked_source_track(self, track: Track) -> Optional[Track]:
-        spid = (track.liked_source_playlist_id or "").strip()
-        stid = (track.liked_source_track_id or "").strip()
+    def _media_source_ids(self, track: Track) -> tuple[str, str]:
+        spid = (track.media_source_playlist_id or track.liked_source_playlist_id or "").strip()
+        stid = (track.media_source_track_id or track.liked_source_track_id or "").strip()
+        return spid, stid
+
+    def _media_source_track(self, track: Track) -> Optional[Track]:
+        spid, stid = self._media_source_ids(track)
         if not spid or not stid:
             return None
         src_pl = self.get_playlist(spid)
@@ -671,12 +679,31 @@ class DownloadService:
             return None
         return src_pl.get_track(stid)
 
-    def _sync_liked_track_media_from_source(self, track: Track) -> bool:
-        """Copy media paths from the liked entry's source track when missing locally."""
-        src = self._liked_source_track(track)
+    def _canonical_media_track(
+        self, playlist_id: str, track_id: str
+    ) -> tuple[Optional[Playlist], Optional[Track]]:
+        pl = self.get_playlist(playlist_id.strip())
+        track = pl.get_track(track_id.strip()) if pl else None
+        seen: set[tuple[str, str]] = set()
+        while pl and track:
+            key = (pl.id, track.id)
+            if key in seen:
+                return None, None
+            seen.add(key)
+            spid, stid = self._media_source_ids(track)
+            if not spid or not stid:
+                return pl, track
+            pl = self.get_playlist(spid)
+            track = pl.get_track(stid) if pl else None
+        return None, None
+
+    def _sync_track_media_from_source(self, track: Track) -> bool:
+        """Copy media paths from the source track when this row is an alias."""
+        src = self._media_source_track(track)
         if not src:
             return False
-        sp_pl = self.get_playlist((track.liked_source_playlist_id or "").strip())
+        spid, _stid = self._media_source_ids(track)
+        sp_pl = self.get_playlist(spid) if spid else None
         if sp_pl:
             self.hydrate_media_paths(sp_pl, persist=False)
         changed = False
@@ -686,10 +713,20 @@ class DownloadService:
         if src.media_variants and not track.media_variants:
             track.media_variants = dict(src.media_variants)
             changed = True
+        if src.youtube_video_id and not track.youtube_video_id:
+            track.youtube_video_id = src.youtube_video_id
+            changed = True
+        if src.loudness_gain_db is not None and track.loudness_gain_db is None:
+            track.loudness_gain_db = src.loudness_gain_db
+            changed = True
         if src.status == DownloadStatus.done and track.status != DownloadStatus.done:
             track.status = DownloadStatus.done
+            track.error = None
             changed = True
         return changed
+
+    def _sync_liked_track_media_from_source(self, track: Track) -> bool:
+        return self._sync_track_media_from_source(track)
 
     def get_track_audio_path(self, playlist_id: str, track_id: str) -> Optional[Path]:
         pl = self.get_playlist(playlist_id.strip())
@@ -700,14 +737,14 @@ class DownloadService:
         if not track:
             return None
         media_track = track
-        if self.is_liked_songs_playlist(pl.id):
-            src = self._liked_source_track(track)
+        if self._media_source_ids(track)[0]:
+            src = self._media_source_track(track)
             if src:
-                sp_pl = self.get_playlist((track.liked_source_playlist_id or "").strip())
+                sp_pl = self.get_playlist(self._media_source_ids(track)[0])
                 if sp_pl:
                     self.hydrate_media_paths(sp_pl, persist=False)
                 media_track = src
-            elif self._sync_liked_track_media_from_source(track):
+            elif self._sync_track_media_from_source(track):
                 media_track = track
         if not media_track.media_relpath:
             return None
@@ -841,8 +878,8 @@ class DownloadService:
 
         to_patch: List[Track] = [track]
         if self.is_liked_songs_playlist(pl.id):
-            self._sync_liked_track_media_from_source(track)
-            src = self._liked_source_track(track)
+            self._sync_track_media_from_source(track)
+            src = self._media_source_track(track)
             if src:
                 to_patch.append(src)
         else:
@@ -1077,6 +1114,46 @@ class DownloadService:
                     }
                 )
         return rows
+
+    def find_canonical_downloaded_source(
+        self,
+        owner_id: Optional[str],
+        video_id: str,
+        title: str,
+        artist: str,
+        *,
+        exclude_playlist_id: Optional[str] = None,
+    ) -> Optional[tuple[str, str]]:
+        """First library row with on-disk audio for this song (follows alias chain)."""
+        exclude = (exclude_playlist_id or "").strip()
+        for m in self.library_matches_for_hit(video_id, title, artist, owner_id):
+            pid = (m.get("playlist_id") or "").strip()
+            tid = (m.get("track_id") or "").strip()
+            if not pid or not tid or pid == exclude:
+                continue
+            canon_pl, canon_t = self._canonical_media_track(pid, tid)
+            if not canon_pl or not canon_t:
+                continue
+            self.hydrate_media_paths(canon_pl, persist=False)
+            if canon_t.status == DownloadStatus.done and self._track_has_resolved_file(canon_t):
+                return canon_pl.id, canon_t.id
+        return None
+
+    def _playlist_already_has_song(
+        self,
+        pl: Playlist,
+        canon_playlist_id: str,
+        canon_track_id: str,
+        video_id: str,
+    ) -> Optional[Track]:
+        vid = (video_id or "").strip()
+        for t in pl.tracks:
+            sp, st = self._media_source_ids(t)
+            if sp == canon_playlist_id and st == canon_track_id:
+                return t
+            if vid and self._youtube_video_id_for_track(t) == vid:
+                return t
+        return None
 
     def reload_library_all_qualities(self, owner_id: Optional[str] = None) -> dict:
         """Re-download every track at both quality tiers and drop every other format.
@@ -1419,10 +1496,9 @@ class DownloadService:
             if fill_albums:
                 changed = self._hydrate_albums_cached(pl, cache_entry, persist) or changed
 
-            if self.is_liked_songs_playlist(pl.id):
-                for t in pl.tracks:
-                    if self._sync_liked_track_media_from_source(t):
-                        changed = True
+            for t in pl.tracks:
+                if self._media_source_ids(t)[0] and self._sync_track_media_from_source(t):
+                    changed = True
 
             if changed and persist:
                 self._save_playlists()
@@ -1521,6 +1597,23 @@ class DownloadService:
                 logging.getLogger(__name__).exception("Download worker job failed")
             finally:
                 self.job_queue.task_done()
+
+    def spotify_url_search_query(self, raw: str) -> Optional[str]:
+        """Spotify track URL -> YouTube search query (artist + title). Playlists return None."""
+        s = (raw or "").strip()
+        if not s:
+            return None
+        try:
+            kind, _sid = detect_spotify_url_type(s)
+        except ValueError:
+            return None
+        if kind != "track":
+            return None
+        info = self._embed.get_track_info(s)
+        artist = (info.artists or "").strip()
+        title = (info.title or "").strip()
+        q = f"{artist} {title}".strip() if artist and title else (title or artist)
+        return q or None
 
     def import_from_line(self, raw: str, owner_id: Optional[str] = None) -> Playlist:
         """
@@ -1727,16 +1820,71 @@ class DownloadService:
         *,
         enqueue_download: bool = True,
         download_quality: str = str(DEFAULT_KBPS),
+        owner_id: Optional[str] = None,
+        source_playlist_id: Optional[str] = None,
+        source_track_id: Optional[str] = None,
     ) -> Track:
         pl = self.get_playlist(playlist_id)
         if not pl:
             raise KeyError("Playlist not found")
         if self.is_liked_songs_playlist(playlist_id):
             raise ValueError("Add songs to Liked Songs using the heart button on the player.")
-        track = Track.create(title=title, artist=artist, url=url)
+        title_s = (title or "").strip()
+        artist_s = (artist or "").strip()
+        u = (url or "").strip() or None
+        yid = youtube_video_id_from_url(u) or ""
+
+        canon: Optional[tuple[str, str]] = None
+        sp = (source_playlist_id or "").strip()
+        st = (source_track_id or "").strip()
+        if sp and st:
+            canon_pl, canon_t = self._canonical_media_track(sp, st)
+            if canon_pl and canon_t and self._track_has_resolved_file(canon_t):
+                canon = (canon_pl.id, canon_t.id)
+        elif enqueue_download and owner_id:
+            found = self.find_canonical_downloaded_source(
+                owner_id, yid, title_s, artist_s, exclude_playlist_id=playlist_id
+            )
+            if found:
+                canon = found
+
+        if canon:
+            canon_pl, canon_t = self._canonical_media_track(canon[0], canon[1])
+            if not canon_pl or not canon_t:
+                canon = None
+            else:
+                existing = self._playlist_already_has_song(
+                    pl, canon_pl.id, canon_t.id, yid or self._youtube_video_id_for_track(canon_t)
+                )
+                if existing:
+                    return existing
+                track = Track.create(
+                    title=title_s or canon_t.title,
+                    artist=artist_s or canon_t.artist,
+                    url=u or canon_t.url,
+                )
+                track.media_source_playlist_id = canon_pl.id
+                track.media_source_track_id = canon_t.id
+                if album and isinstance(album, str) and album.strip():
+                    track.album = album.strip()[:500]
+                elif canon_t.album:
+                    track.album = canon_t.album
+                if canon_t.cover_url:
+                    track.cover_url = canon_t.cover_url
+                if canon_t.youtube_video_id:
+                    track.youtube_video_id = canon_t.youtube_video_id
+                elif yid:
+                    track.youtube_video_id = yid
+                track.status = DownloadStatus.done
+                self._sync_track_media_from_source(track)
+                pl.add_track(track)
+                self._invalidate_hydration_cache(pl.id)
+                self._save_playlists()
+                return track
+
+        track = Track.create(title=title_s, artist=artist_s, url=u)
         if album and isinstance(album, str) and album.strip():
             track.album = album.strip()[:500]
-        yid = youtube_video_id_from_url(url)
         if yid:
             track.youtube_video_id = yid
         if not enqueue_download:
@@ -1864,6 +2012,14 @@ class DownloadService:
                 track = pl.get_track(track_id) if pl else None
                 if not track:
                     return
+
+                if self._media_source_ids(track)[0]:
+                    self._sync_track_media_from_source(track)
+                    if self._track_has_resolved_file(track, q):
+                        if not supplementary and track.status != DownloadStatus.done:
+                            pl.update_track_status(track_id, DownloadStatus.done)
+                            self._save_playlists(immediate=False)
+                        return
 
                 if not force and self._track_has_resolved_file(track, q):
                     if not supplementary and track.status != DownloadStatus.done:

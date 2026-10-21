@@ -178,16 +178,19 @@ class AppShellController {
         await this.runGlobalSearch(q);
     }
 
+    // Covers are immutable per track id and the server sends a 7-day cache
+    // header, so only bust when a caller explicitly asks for it. Defaulting to
+    // Date.now() re-downloaded every tile on each render.
     static withCoverCacheBust(url, bust) {
-        if (!url) return url;
+        if (!url || bust == null) return url;
         try {
             const u = new URL(url, location.origin);
-            u.searchParams.set('v', String(bust != null ? bust : Date.now()));
+            u.searchParams.set('v', String(bust));
             const q = u.searchParams.toString();
             return u.pathname + (q ? '?' + q : '');
         } catch (e) {
             const base = String(url).split('?')[0];
-            return base + '?v=' + (bust != null ? bust : Date.now());
+            return base + '?v=' + bust;
         }
     }
 
@@ -197,7 +200,12 @@ class AppShellController {
         try {
             const u = new URL(url, location.origin);
             if (u.pathname.indexOf('/tracks/') >= 0 && /\/cover\/?$/.test(u.pathname)) {
-                u.searchParams.set('q', covers.qualityKey());
+                const key = covers.qualityKey();
+                // "high" is the server default; rewriting it would make the
+                // browser fetch the same image twice per render.
+                if (key === 'high' && !u.searchParams.has('q')) return url;
+                if (key === 'high') u.searchParams.delete('q');
+                else u.searchParams.set('q', key);
                 const q = u.searchParams.toString();
                 return u.pathname + (q ? '?' + q : '');
             }
@@ -232,7 +240,6 @@ class AppShellController {
 
     static buildPlaylistArtGridEl(tiles, sizeClass, bust) {
         const sz = sizeClass || 'h-8 w-8';
-        const cacheBust = bust != null ? bust : Date.now();
         const wrap = document.createElement('div');
         wrap.className = 'grid ' + sz + ' shrink-0 overflow-hidden rounded bg-[#1a1a1a] grid-cols-2';
         wrap.style.gridTemplateRows = 'repeat(2, minmax(0, 1fr))';
@@ -243,7 +250,7 @@ class AppShellController {
                 const cell = document.createElement('div');
                 cell.className = 'playlist-art-grid__cell h-full w-full bg-[#282828]';
                 const img = document.createElement('img');
-                img.src = AppShellController.withCoverCacheBust(AppShellController.withCoverQuality(arr[i]), cacheBust);
+                img.src = AppShellController.withCoverCacheBust(AppShellController.withCoverQuality(arr[i]), bust);
                 img.alt = '';
                 img.loading = 'lazy';
                 img.decoding = 'async';
@@ -266,20 +273,25 @@ class AppShellController {
     async reloadPlaylistsCatalog() {
         try {
             const cr = await fetch('/api/playlists/catalog');
-            if (!cr.ok) return;
+            if (!cr.ok) return false;
             const data = await cr.json();
             if (Array.isArray(data)) {
+                const next = JSON.stringify(data);
+                const changed = next !== this._catalogJson;
+                this._catalogJson = next;
                 this.playlistsCatalog = data;
                 window.__playlistsCatalog = data;
+                return changed;
             }
         } catch (e) {}
+        return false;
     }
 
     renderSidebarPlaylistList(activePlaylistId, bust) {
         const list = document.getElementById('sidebar-playlist-list');
         if (!list) return;
         const activeId = (activePlaylistId || '').trim();
-        const cacheBust = bust != null ? bust : Date.now();
+        this._sidebarActiveId = activeId;
         list.innerHTML = '';
         this.playlistsCatalog.forEach((pl) => {
             const isActive = !!activeId && pl.id === activeId;
@@ -292,7 +304,7 @@ class AppShellController {
             a.className = 'playlist-spa-nav flex w-full min-w-0 items-center gap-x-3 px-3 py-2 rounded-md' + (isActive ? '' : ' hover:bg-[#282828]');
             const artWrap = document.createElement('div');
             artWrap.className = 'h-10 w-10 shrink-0 overflow-hidden rounded bg-[#1a1a1a]';
-            artWrap.appendChild(AppShellController.buildPlaylistArtGridEl(pl.cover_tiles, 'h-full w-full', cacheBust));
+            artWrap.appendChild(AppShellController.buildPlaylistArtGridEl(pl.cover_tiles, 'h-full w-full', bust));
             a.appendChild(artWrap);
             const span = document.createElement('span');
             span.className = 'truncate';
@@ -1381,9 +1393,11 @@ class AppShellController {
         window.closeGlobalSearch = () => this.closeGlobalSearch();
         window.loadPlaylistRecommendations = (pid) => this.loadPlaylistRecommendations(pid);
         window.refreshSidebarPlaylistList = async (activePlaylistId) => {
-            await this.reloadPlaylistsCatalog();
+            const changed = await this.reloadPlaylistsCatalog();
             const pid = activePlaylistId != null ? activePlaylistId : (window.__spaPlaylistId || '');
-            this.renderSidebarPlaylistList(pid, Date.now());
+            // Rebuilding the list recreates every <img>; skip it when nothing changed.
+            if (!changed && pid === this._sidebarActiveId) return;
+            this.renderSidebarPlaylistList(pid);
         };
         window.applyQualityAwareCovers = (root) => this.applyQualityAwareCovers(root);
         window.renderSpolocalMixRows = (container, hits, opts) => {
@@ -1393,6 +1407,9 @@ class AppShellController {
 
         await this.reloadPlaylistsCatalog();
         window.__playlistsCatalog = this.playlistsCatalog;
+        // The sidebar is server-rendered; remember its active id so the first
+        // refresh does not rebuild (and reload) every tile.
+        this._sidebarActiveId = String(window.__spaPlaylistId || '').trim();
         if (typeof window.refreshHomeView === 'function') window.refreshHomeView();
 
         // Preview audio ends/errors
@@ -1555,6 +1572,9 @@ class AppShellController {
         const el = root || document;
         const pid = String(window.__spaPlaylistId || '').trim();
         el.querySelectorAll('img[src*="/tracks/"][src*="/cover"]').forEach((img) => {
+            // Track rows are handled below with the full cover URL; rewriting
+            // them here first would make the browser fetch the image twice.
+            if (img.closest('tr.track-row[data-track-id]')) return;
             const src = img.getAttribute('src');
             if (!src) return;
             img.src = AppShellController.withCoverQuality(src);
@@ -1576,17 +1596,12 @@ class AppShellController {
     }
 
     bustPlaylistCoverImages(root) {
+        // Kept for callers, but no longer forces a re-download: cover URLs are
+        // stable per track and cached by the browser for a week.
         const el = root || document;
         if (typeof window.applyQualityAwareCovers === 'function') {
             window.applyQualityAwareCovers(el);
         }
-        const bust = Date.now();
-        el.querySelectorAll('img[src*="/tracks/"][src*="/cover"]').forEach((img) => {
-            const src = img.getAttribute('src');
-            if (!src) return;
-            img.src = AppShellController.withCoverCacheBust(src, bust);
-            img.style.opacity = '';
-        });
     }
 }
 

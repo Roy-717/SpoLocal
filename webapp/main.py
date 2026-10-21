@@ -922,7 +922,7 @@ async def api_thumb(vid: str, q: str = "high"):
         return Response(
             content=raw,
             media_type=mime,
-            headers={"Cache-Control": "public, max-age=86400"},
+            headers={"Cache-Control": "public, max-age=604800, immutable"},
         )
     raise HTTPException(status_code=404, detail="Thumbnail not found")
 
@@ -1152,14 +1152,14 @@ async def track_cover(playlist_id: str, track_id: str, request: Request, q: str 
             return Response(
                 content=raw,
                 media_type=mime,
-                headers={"Cache-Control": "public, max-age=86400"},
+                headers={"Cache-Control": "public, max-age=604800, immutable"},
             )
 
     if cpath.is_file():
         return FileResponse(
             str(cpath),
             media_type="image/jpeg",
-            headers={"Cache-Control": "public, max-age=604800"},
+            headers={"Cache-Control": "public, max-age=604800, immutable"},
         )
 
     path = await asyncio.to_thread(service.get_track_audio_path, pid, tid)
@@ -1191,7 +1191,7 @@ async def track_cover(playlist_id: str, track_id: str, request: Request, q: str 
         max_side=max_side,
         quality=jpeg_q,
     )
-    headers = {"Cache-Control": "public, max-age=604800"}
+    headers = {"Cache-Control": "public, max-age=604800, immutable"}
     if processed:
         try:
             cpath.parent.mkdir(parents=True, exist_ok=True)
@@ -1203,7 +1203,7 @@ async def track_cover(playlist_id: str, track_id: str, request: Request, q: str 
     return Response(
         content=raw,
         media_type=orig_mime if orig_mime.startswith("image/") else "image/jpeg",
-        headers={"Cache-Control": "public, max-age=3600"},
+        headers={"Cache-Control": "public, max-age=604800, immutable"},
     )
 
 

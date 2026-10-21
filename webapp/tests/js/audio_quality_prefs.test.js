@@ -171,8 +171,13 @@ describe('SpolocalCoverUrls', () => {
     });
 
     it('builds local cover URLs', () => {
+        localStorage.setItem('spolocal_playback_kbps', '192');
         expect(covers.localCoverUrl('p 1', 't/1')).toBe(
-            '/playlists/p%201/tracks/t%2F1/cover?q=high',
+            '/playlists/p%201/tracks/t%2F1/cover',
+        );
+        localStorage.setItem('spolocal_playback_kbps', '64');
+        expect(covers.localCoverUrl('p 1', 't/1')).toBe(
+            '/playlists/p%201/tracks/t%2F1/cover?q=low',
         );
     });
 
@@ -183,6 +188,6 @@ describe('SpolocalCoverUrls', () => {
 
     it('prefers the local cover in Highest', () => {
         localStorage.setItem('spolocal_playback_kbps', '192');
-        expect(covers.trackCoverUrl('p', 't', 'abc')).toBe('/playlists/p/tracks/t/cover?q=high');
+        expect(covers.trackCoverUrl('p', 't', 'abc')).toBe('/playlists/p/tracks/t/cover');
     });
 });

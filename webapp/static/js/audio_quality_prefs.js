@@ -201,8 +201,11 @@
             const p = String(pid || '').trim();
             const t = String(tid || '').trim();
             if (!p || !t) return '';
-            return '/playlists/' + encodeURIComponent(p) + '/tracks/' + encodeURIComponent(t)
-                + '/cover?q=' + encodeURIComponent(this.qualityKey());
+            const base = '/playlists/' + encodeURIComponent(p) + '/tracks/' + encodeURIComponent(t) + '/cover';
+            // "high" is the server default; omitting it keeps the URL identical
+            // to the server-rendered one so the browser reuses the cached image.
+            const key = this.qualityKey();
+            return key === 'high' ? base : base + '?q=' + encodeURIComponent(key);
         }
 
         trackCoverUrl(pid, tid, vid) {

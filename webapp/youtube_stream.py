@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shlex
 import tempfile
@@ -39,6 +40,13 @@ _log = logging.getLogger("spolocal.stream")
 PREVIEW_CACHE_TTL_SECONDS = 8 * 60
 PREVIEW_CACHE_MAX_ENTRIES = 24
 VIDEO_CACHE_TTL_SECONDS = 8 * 60
+
+_THUMB_EXT_BY_MIME = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 
 _STREAM_MEDIA_TYPES = {
     "webm": "audio/webm",
@@ -502,6 +510,15 @@ class YouTubeStreamingService:
         self._preview_inflight: dict[str, asyncio.Task[YoutubeCdnAudio]] = {}
         self._video_cache: dict[str, tuple[YoutubeCdnAudio, float]] = {}
         self._video_inflight: dict[str, asyncio.Task[YoutubeCdnAudio]] = {}
+        self._thumb_cache_dir = self._resolve_thumb_cache_dir(root)
+
+    @staticmethod
+    def _resolve_thumb_cache_dir(root: Path) -> Path:
+        """Keep the cache next to the playlists file so it survives rebuilds."""
+        playlists = (os.environ.get("SPLOCAL_PLAYLISTS_PATH") or "").strip()
+        if playlists:
+            return Path(playlists).parent / "thumb_cache"
+        return root / "data" / "thumb_cache"
 
     # ---- stream source helpers --------------------------------------------
 
@@ -700,7 +717,38 @@ class YouTubeStreamingService:
             if rc not in (0, None) and not sent_any:
                 raise HTTPException(status_code=502, detail=f"Audio stream failed ({rc})")
 
+    def _thumb_cache_prefix(self, video_id: str, tier: str) -> str:
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in video_id.strip())[:64]
+        return f"{safe}_{tier}"
+
+    def _read_cached_thumb(self, video_id: str, tier: str) -> Optional[tuple[bytes, str]]:
+        prefix = self._thumb_cache_prefix(video_id, tier)
+        try:
+            for path in self._thumb_cache_dir.glob(prefix + ".*"):
+                mime = {
+                    ".jpg": "image/jpeg",
+                    ".png": "image/png",
+                    ".webp": "image/webp",
+                    ".gif": "image/gif",
+                }.get(path.suffix.lower(), "image/jpeg")
+                return path.read_bytes(), mime
+        except OSError:
+            pass
+        return None
+
+    def _write_cached_thumb(self, video_id: str, tier: str, raw: bytes, mime: str) -> None:
+        ext = _THUMB_EXT_BY_MIME.get(mime, ".jpg")
+        path = self._thumb_cache_dir / (self._thumb_cache_prefix(video_id, tier) + ext)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+        except OSError:
+            pass
+
     async def fetch_thumbnail_bytes(self, video_id: str, tier: str) -> Optional[tuple[bytes, str]]:
+        cached = self._read_cached_thumb(video_id, tier)
+        if cached:
+            return cached
         urls = tuple(f"https://i.ytimg.com/vi/{video_id}/{name}" for name in YoutubeThumbQuality.files(tier))
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as client:
@@ -710,6 +758,7 @@ class YouTubeStreamingService:
                         mime = r.headers.get("content-type") or "image/jpeg"
                         if not mime.startswith("image/"):
                             mime = "image/jpeg"
+                        self._write_cached_thumb(video_id, tier, r.content, mime)
                         return r.content, mime
         except Exception:
             return None

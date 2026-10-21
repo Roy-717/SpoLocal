@@ -4,6 +4,7 @@
 webapp/node_modules
 webapp/.venv
 webapp/dist
+webapp/tests
 data
 downloads
 ffmpeg

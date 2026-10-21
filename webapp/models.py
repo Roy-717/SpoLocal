@@ -145,10 +145,14 @@ def track_play_variants(track: Track) -> Dict[str, str]:
     for key, rel in (track.media_variants or {}).items():
         if rel:
             out[key] = "/media/" + quote(rel, safe="/")
-    if track.media_relpath and not out:
+    # Keep the primary file visible even when variants exist. Hydration fills
+    # ``media_relpath`` without touching ``media_variants``; without this, adding
+    # a 64k variant would hide an existing 192k file from the frontend.
+    if track.media_relpath:
         inferred = kbps_from_relpath(track.media_relpath)
         key = str(inferred) if inferred else "192"
-        out[key] = "/media/" + quote(track.media_relpath, safe="/")
+        if key not in out:
+            out[key] = "/media/" + quote(track.media_relpath, safe="/")
     return out
 
 

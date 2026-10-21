@@ -30,6 +30,11 @@ _LEGACY_MAP = {
 
 def snap_kbps(value: int) -> int:
     v = int(value)
+    # The retired 120 kbps tier maps up to Highest, matching parse_quality_kbps.
+    # Without this, 120 snaps to 64 (closer than 192) and legacy __120k files
+    # would be treated as Data Saver.
+    if v == QUALITY_MID_KBPS:
+        return QUALITY_HIGH_KBPS
     return min(QUALITY_TIERS, key=lambda t: abs(t - v))
 
 

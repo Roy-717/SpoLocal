@@ -1289,13 +1289,16 @@ class DownloadService:
         """How many downloads are still in the pipeline (queued, running, or supplementary)."""
         if not owner_id:
             return 0
-        pipeline = self.job_queue.qsize() + len(self.progress)
+        owned_tids: set[str] = set()
         status_n = 0
         for pl in self.list_playlists_for_user(owner_id):
             for t in pl.tracks:
+                owned_tids.add(t.id)
                 if t.status in (DownloadStatus.queued, DownloadStatus.downloading):
                     status_n += 1
-        return max(pipeline, status_n)
+        # The job queue is global, so count only this owner's active jobs.
+        active = sum(1 for tid in self.progress if tid in owned_tids)
+        return max(active, status_n)
 
     def error_tracks_for_sidebar(self, owner_id: Optional[str] = None) -> List[dict]:
         """Tracks in error state, for the downloads sidebar (scoped to the owner)."""
@@ -1439,10 +1442,18 @@ class DownloadService:
             }
             jobs = {tid: row for tid, row in jobs.items() if tid in owned_tids}
         remaining = self.downloads_remaining_count(owner_id)
+        queue_depth = 0
+        if owner_id:
+            queue_depth = sum(
+                1
+                for pl in self.list_playlists_for_user(owner_id)
+                for t in pl.tracks
+                if t.status == DownloadStatus.queued
+            )
         return {
             "jobs": jobs,
             "remaining": remaining,
-            "queue_depth": self.job_queue.qsize(),
+            "queue_depth": queue_depth,
             "errors": err_slice,
             "errors_total": len(err_all),
         }

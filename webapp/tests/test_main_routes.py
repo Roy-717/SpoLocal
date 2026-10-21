@@ -1,0 +1,221 @@
+"""Route-level tests for auth gates and playlist ownership."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from models import DownloadStatus, Track
+
+
+def make_playlist(service, name: str, owner_id: str, *, tracks: int = 0):
+    pl = service.create_playlist(name, owner_id=owner_id)
+    for i in range(tracks):
+        t = Track.create(f"Song {i}", "Artist")
+        t.status = DownloadStatus.done
+        pl.add_track(t)
+    return pl
+
+
+class TestGuestAccess:
+    def test_me_is_guest(self, client) -> None:
+        assert client.get("/api/auth/me").json() == {"user": None}
+
+    def test_catalog_is_empty(self, client) -> None:
+        assert client.get("/api/playlists/catalog").json() == []
+
+    def test_playlist_state_requires_login(self, client, service) -> None:
+        pl = make_playlist(service, "Mine", "u1")
+        assert client.get(f"/api/playlist/state?playlist_id={pl.id}").status_code == 401
+
+    def test_playlist_view_requires_login(self, client, service) -> None:
+        pl = make_playlist(service, "Mine", "u1")
+        assert client.get(f"/api/playlist/view?playlist_id={pl.id}").status_code == 401
+
+    def test_media_requires_login(self, client) -> None:
+        assert client.get("/media/youtube/x.webm").status_code == 401
+
+    def test_like_requires_login(self, client) -> None:
+        resp = client.post(
+            "/api/track/like",
+            json={"source_playlist_id": "p", "source_track_id": "t", "liked": True},
+        )
+        assert resp.status_code == 401
+
+    def test_progress_is_public_but_empty(self, client) -> None:
+        payload = client.get("/api/progress").json()
+        assert payload["jobs"] == {}
+        assert payload["remaining"] == 0
+        assert payload["errors"] == []
+
+    def test_recommendations_require_login(self, client, service) -> None:
+        pl = make_playlist(service, "Mine", "u1")
+        assert client.get(f"/api/playlist/recommendations?playlist_id={pl.id}").status_code == 401
+
+
+class TestAuthRoutes:
+    def test_register_sets_cookie(self, client) -> None:
+        resp = client.post("/api/auth/register", json={"username": "alice", "password": "long enough"})
+        assert resp.status_code == 200
+        assert resp.json()["user"]["username"] == "alice"
+        assert "spolocal_session" in resp.cookies
+
+    def test_register_duplicate_is_400(self, client) -> None:
+        client.post("/api/auth/register", json={"username": "alice", "password": "long enough"})
+        resp = client.post("/api/auth/register", json={"username": "alice", "password": "long enough"})
+        assert resp.status_code == 400
+
+    def test_login_and_logout(self, client) -> None:
+        client.post("/api/auth/register", json={"username": "alice", "password": "long enough"})
+        client.post("/api/auth/logout")
+        assert client.get("/api/auth/me").json() == {"user": None}
+
+        resp = client.post("/api/auth/login", json={"username": "alice", "password": "long enough"})
+        assert resp.status_code == 200
+        assert client.get("/api/auth/me").json()["user"]["username"] == "alice"
+
+        client.post("/api/auth/logout")
+        assert client.get("/api/auth/me").json() == {"user": None}
+
+    def test_login_wrong_password_is_400(self, client) -> None:
+        client.post("/api/auth/register", json={"username": "alice", "password": "long enough"})
+        client.post("/api/auth/logout")
+        resp = client.post("/api/auth/login", json={"username": "alice", "password": "wrong"})
+        assert resp.status_code == 400
+
+    def test_me_returns_public_user(self, client) -> None:
+        client.post("/api/auth/register", json={"username": "alice", "password": "long enough"})
+        user = client.get("/api/auth/me").json()["user"]
+        assert user["username"] == "alice"
+        assert "password_hash" not in user
+
+
+class TestOwnership:
+    def test_catalog_only_lists_own_playlists(self, client, service, logged_in) -> None:
+        _, user_id = logged_in
+        make_playlist(service, "Mine", user_id)
+        make_playlist(service, "Other", "someone-else")
+
+        names = [row["name"] for row in client.get("/api/playlists/catalog").json()]
+        assert names == ["Mine"]
+
+    def test_playlist_state_owner(self, client, service, logged_in) -> None:
+        _, user_id = logged_in
+        pl = make_playlist(service, "Mine", user_id, tracks=2)
+        resp = client.get(f"/api/playlist/state?playlist_id={pl.id}")
+        assert resp.status_code == 200
+        assert len(resp.json()["tracks_payload"]) == 2
+
+    def test_playlist_state_non_owner_is_404(self, client, service, logged_in) -> None:
+        make_playlist(service, "Other", "someone-else")
+        other = next(pl for pl in service.playlists.values() if pl.name == "Other")
+        assert client.get(f"/api/playlist/state?playlist_id={other.id}").status_code == 404
+
+    def test_playlist_view_owner_returns_html(self, client, service, logged_in) -> None:
+        """Regression: api_playlist_view used an undefined uid and returned 500."""
+        _, user_id = logged_in
+        pl = make_playlist(service, "Mine", user_id, tracks=1)
+        resp = client.get(f"/api/playlist/view?playlist_id={pl.id}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["playlist_id"] == pl.id
+        assert len(body["tracks_payload"]) == 1
+        assert "<html" in body["html"].lower() or "playlist" in body["html"].lower()
+
+    def test_playlist_view_non_owner_is_404(self, client, service, logged_in) -> None:
+        make_playlist(service, "Other", "someone-else")
+        other = next(pl for pl in service.playlists.values() if pl.name == "Other")
+        assert client.get(f"/api/playlist/view?playlist_id={other.id}").status_code == 404
+
+    def test_track_info_owner(self, client, service, logged_in) -> None:
+        _, user_id = logged_in
+        pl = make_playlist(service, "Mine", user_id, tracks=1)
+        tid = pl.tracks[0].id
+        resp = client.get(f"/api/playlists/{pl.id}/tracks/{tid}/info")
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "Song 0"
+
+    def test_track_info_non_owner_is_404(self, client, service, logged_in) -> None:
+        other = make_playlist(service, "Other", "someone-else", tracks=1)
+        tid = other.tracks[0].id
+        assert client.get(f"/api/playlists/{other.id}/tracks/{tid}/info").status_code == 404
+
+    def test_track_info_guest_is_401(self, client, service) -> None:
+        pl = make_playlist(service, "Mine", "u1", tracks=1)
+        tid = pl.tracks[0].id
+        assert client.get(f"/api/playlists/{pl.id}/tracks/{tid}/info").status_code == 401
+
+    def test_cover_route_is_gated(self, client, service, logged_in) -> None:
+        other = make_playlist(service, "Other", "someone-else", tracks=1)
+        tid = other.tracks[0].id
+        assert client.get(f"/playlists/{other.id}/tracks/{tid}/cover").status_code == 404
+
+    def test_lyrics_route_is_gated(self, client, service, logged_in) -> None:
+        other = make_playlist(service, "Other", "someone-else", tracks=1)
+        tid = other.tracks[0].id
+        assert client.get(f"/playlists/{other.id}/tracks/{tid}/lyrics").status_code == 404
+
+    def test_media_serves_owned_file(self, client, service, temp_root: Path, monkeypatch, main_module) -> None:
+        from media_server import MediaServer
+
+        monkeypatch.setattr(main_module, "media_server", MediaServer(temp_root / "downloads", temp_root))
+        path = temp_root / "downloads" / "youtube" / "song.webm"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"0123456789")
+
+        client.post("/api/auth/register", json={"username": "alice", "password": "long enough"})
+        resp = client.get("/media/youtube/song.webm")
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
+
+
+class TestSearchScoping:
+    def test_guest_search_has_no_library_matches(
+        self, client, service, monkeypatch, main_module
+    ) -> None:
+        pl = make_playlist(service, "Mine", "u1", tracks=1)
+        pl.tracks[0].youtube_video_id = "dQw4w9WgXcQ"
+
+        monkeypatch.setattr(
+            main_module,
+            "search_youtube_tracks",
+            lambda root, q, limit: [
+                {"video_id": "dQw4w9WgXcQ", "title": "Song 0", "artist": "Artist", "channel": "Artist"}
+            ],
+        )
+
+        async def noop(hits):
+            return None
+
+        monkeypatch.setattr(main_module.streaming, "annotate_search_stream_src", noop)
+        main_module._search_cache.clear()
+
+        resp = client.get("/api/search/songs?q=song")
+        assert resp.status_code == 200
+        assert resp.json()["hits"][0]["library_matches"] == []
+
+    def test_owner_search_has_library_matches(
+        self, client, service, logged_in, monkeypatch, main_module
+    ) -> None:
+        _, user_id = logged_in
+        pl = make_playlist(service, "Mine", user_id, tracks=1)
+        pl.tracks[0].youtube_video_id = "dQw4w9WgXcQ"
+
+        monkeypatch.setattr(
+            main_module,
+            "search_youtube_tracks",
+            lambda root, q, limit: [
+                {"video_id": "dQw4w9WgXcQ", "title": "Song 0", "artist": "Artist", "channel": "Artist"}
+            ],
+        )
+
+        async def noop(hits):
+            return None
+
+        monkeypatch.setattr(main_module.streaming, "annotate_search_stream_src", noop)
+        main_module._search_cache.clear()
+
+        resp = client.get("/api/search/songs?q=song")
+        assert resp.status_code == 200
+        matches = resp.json()["hits"][0]["library_matches"]
+        assert [m["track_id"] for m in matches] == [pl.tracks[0].id]

@@ -1,0 +1,460 @@
+"""Unit tests for library ownership, variants, and progress reporting."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+import download_service as download_service_module
+from download_service import (
+    DownloadService,
+    _playlist_from_dict,
+    _track_from_dict,
+    spotify_catalog_key_from_import_url,
+    spotify_track_id_from_url,
+    youtube_video_id_from_url,
+)
+from models import DownloadStatus, Playlist, Track
+from conftest import _ORIG_RESET_INTERRUPTED, _ORIG_SYNC_FROM_DOWNLOAD_FOLDERS
+
+
+def make_track(
+    title: str = "Song",
+    artist: str = "Artist",
+    *,
+    status: DownloadStatus = DownloadStatus.done,
+    video_id: str | None = None,
+    variants: dict[str, str] | None = None,
+) -> Track:
+    t = Track.create(title, artist)
+    t.status = status
+    t.youtube_video_id = video_id
+    t.media_variants = dict(variants or {})
+    return t
+
+
+def write_media(root: Path, relpath: str, data: bytes = b"audio") -> Path:
+    path = root / "downloads" / relpath
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
+
+
+class TestUrlParsing:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M", "playlist:37i9dQZF1DXcBWIGoYBM5M"),
+            ("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=abc", "playlist:37i9dQZF1DXcBWIGoYBM5M"),
+            ("https://open.spotify.com/album/abc123", "album:abc123"),
+            ("https://open.spotify.com/track/abc123", "track:abc123"),
+            ("https://example.com/playlist/abc", None),
+            ("", None),
+        ],
+    )
+    def test_catalog_key(self, raw: str, expected) -> None:
+        assert spotify_catalog_key_from_import_url(raw) == expected
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("spotify:track:abc123", "abc123"),
+            ("https://open.spotify.com/track/abc123?si=x", "abc123"),
+            ("https://open.spotify.com/album/abc123", None),
+            (None, None),
+        ],
+    )
+    def test_spotify_track_id(self, url, expected) -> None:
+        assert spotify_track_id_from_url(url) == expected
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+            ("https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+            ("https://www.youtube.com/embed/dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+            ("https://example.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+            ("https://example.com", None),
+            (None, None),
+        ],
+    )
+    def test_youtube_video_id(self, url, expected) -> None:
+        assert youtube_video_id_from_url(url) == expected
+
+
+class TestDeserialization:
+    def test_track_from_dict_migrates_primary_relpath(self) -> None:
+        t = _track_from_dict(
+            {
+                "id": "t1",
+                "title": "Song",
+                "artist": "Artist",
+                "status": "done",
+                "media_relpath": "youtube/Song [abc]__64k.webm",
+            }
+        )
+        assert t.status == DownloadStatus.done
+        assert t.media_variants == {"64": "youtube/Song [abc]__64k.webm"}
+
+    def test_track_from_dict_defaults(self) -> None:
+        t = _track_from_dict({"id": "t1", "title": "Song", "artist": "Artist"})
+        assert t.status == DownloadStatus.queued
+        assert t.media_variants == {}
+        assert t.media_relpath is None
+        assert t.album is None
+
+    def test_playlist_from_dict(self) -> None:
+        pl = _playlist_from_dict(
+            {
+                "id": "p1",
+                "name": "Mix",
+                "owner_id": "u1",
+                "tracks": [{"id": "t1", "title": "Song", "artist": "Artist"}],
+            }
+        )
+        assert pl.owner_id == "u1"
+        assert len(pl.tracks) == 1
+
+
+class TestOwnership:
+    def test_get_playlist_for_user(self, service: DownloadService) -> None:
+        pl = service.create_playlist("Mine", owner_id="u1")
+        assert service.get_playlist_for_user(pl.id, "u1") is pl
+        assert service.get_playlist_for_user(pl.id, "u2") is None
+        assert service.get_playlist_for_user(pl.id, None) is None
+
+    def test_list_playlists_for_user(self, service: DownloadService) -> None:
+        a = service.create_playlist("A", owner_id="u1")
+        b = service.create_playlist("B", owner_id="u2")
+        assert service.list_playlists_for_user("u1") == [a]
+        assert service.list_playlists_for_user("u2") == [b]
+        assert service.list_playlists_for_user(None) == []
+
+    def test_liked_songs_id_for(self, service: DownloadService) -> None:
+        assert service.liked_songs_id_for(None) is None
+        assert service.liked_songs_id_for("u1") == "spolocal_liked_songs_u1"
+
+    def test_ensure_liked_songs_playlist(self, service: DownloadService) -> None:
+        pl = service._ensure_liked_songs_playlist("u1")
+        assert pl is not None
+        assert pl.id == "spolocal_liked_songs_u1"
+        assert pl.owner_id == "u1"
+        assert service._ensure_liked_songs_playlist("u1") is pl
+        assert service._ensure_liked_songs_playlist(None) is None
+
+    def test_claim_ownerless_playlists(self, service: DownloadService) -> None:
+        unclaimed = service.create_playlist("Unclaimed")
+        owned = service.create_playlist("Owned", owner_id="u2")
+        legacy = Playlist(id=DownloadService.LIKED_SONGS_PLAYLIST_ID, name="Liked Songs")
+        service.playlists[legacy.id] = legacy
+
+        changed = service.claim_ownerless_playlists("u1")
+
+        assert changed == 2
+        assert unclaimed.owner_id == "u1"
+        assert owned.owner_id == "u2"
+        assert legacy.owner_id == "u1"
+        assert legacy.id == "spolocal_liked_songs_u1"
+        assert DownloadService.LIKED_SONGS_PLAYLIST_ID not in service.playlists
+        assert service.playlists["spolocal_liked_songs_u1"] is legacy
+
+    def test_claim_ownerless_is_noop_for_guest(self, service: DownloadService) -> None:
+        pl = service.create_playlist("Unclaimed")
+        assert service.claim_ownerless_playlists(None) == 0
+        assert pl.owner_id is None
+
+    def test_claim_ownerless_does_not_steal_owned(self, service: DownloadService) -> None:
+        pl = service.create_playlist("Owned", owner_id="u2")
+        assert service.claim_ownerless_playlists("u1") == 0
+        assert pl.owner_id == "u2"
+
+    def test_create_playlist_rejects_reserved_name(self, service: DownloadService) -> None:
+        with pytest.raises(ValueError, match="reserved"):
+            service.create_playlist("Liked Songs", owner_id="u1")
+
+    def test_is_liked_songs_playlist(self, service: DownloadService) -> None:
+        assert service.is_liked_songs_playlist("spolocal_liked_songs")
+        assert service.is_liked_songs_playlist("spolocal_liked_songs_u1")
+        assert not service.is_liked_songs_playlist("other")
+
+
+class TestCatalogAndNav:
+    def test_catalog_is_owner_scoped(self, service: DownloadService) -> None:
+        pl = service.create_playlist("Mine", owner_id="u1")
+        pl.add_track(make_track("Song", "Artist"))
+        service.create_playlist("Other", owner_id="u2")
+
+        rows = service.list_playlist_catalog("u1")
+        assert [r["name"] for r in rows] == ["Mine"]
+        assert rows[0]["cover_tiles"] == [f"/playlists/{pl.id}/tracks/{pl.tracks[0].id}/cover"]
+        assert rows[0]["system_locked"] is False
+
+    def test_catalog_marks_liked_songs_locked(self, service: DownloadService) -> None:
+        service._ensure_liked_songs_playlist("u1")
+        rows = service.list_playlist_catalog("u1")
+        assert rows[0]["system_locked"] is True
+
+    def test_nav_marks_active(self, service: DownloadService) -> None:
+        a = service.create_playlist("A", owner_id="u1")
+        b = service.create_playlist("B", owner_id="u1")
+        rows = service.list_playlist_nav(a.id, "u1")
+        assert {r["id"]: r["active"] for r in rows} == {a.id: True, b.id: False}
+
+    def test_guest_catalog_is_empty(self, service: DownloadService) -> None:
+        service.create_playlist("Mine", owner_id="u1")
+        assert service.list_playlist_catalog(None) == []
+        assert service.list_playlist_nav(None, None) == []
+
+
+class TestVariantResolution:
+    def test_track_has_resolved_file_by_variant(self, service: DownloadService, temp_root: Path) -> None:
+        write_media(temp_root, "youtube/Song [abc]__64k.webm")
+        t = make_track(variants={"64": "youtube/Song [abc]__64k.webm"})
+        assert service._track_has_resolved_file(t, "64")
+        assert not service._track_has_resolved_file(t, "192")
+
+    def test_track_has_resolved_file_falls_back_to_primary_for_192(
+        self, service: DownloadService, temp_root: Path
+    ) -> None:
+        write_media(temp_root, "youtube/Song [abc]__192k.opus")
+        t = make_track()
+        t.media_relpath = "youtube/Song [abc]__192k.opus"
+        assert service._track_has_resolved_file(t, "192")
+
+    def test_track_has_resolved_file_any(self, service: DownloadService, temp_root: Path) -> None:
+        write_media(temp_root, "youtube/Song [abc]__64k.webm")
+        t = make_track(variants={"64": "youtube/Song [abc]__64k.webm"})
+        assert service._track_has_resolved_file(t)
+
+    def test_missing_file_is_not_resolved(self, service: DownloadService) -> None:
+        t = make_track(variants={"64": "youtube/missing__64k.webm"})
+        assert not service._track_has_resolved_file(t, "64")
+
+    def test_relpath_matches_quality_by_suffix(self, service: DownloadService, temp_root: Path) -> None:
+        write_media(temp_root, "youtube/Song [abc]__64k.webm")
+        assert service._relpath_matches_quality("youtube/Song [abc]__64k.webm", "64")
+        assert not service._relpath_matches_quality("youtube/Song [abc]__64k.webm", "192")
+
+    def test_relpath_matches_quality_by_bitrate(
+        self, service: DownloadService, temp_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        write_media(temp_root, "legacy.mp3")
+        monkeypatch.setattr(
+            download_service_module,
+            "read_audio_file_stats",
+            lambda p: {"bitrate_kbps": 50},
+        )
+        assert service._relpath_matches_quality("legacy.mp3", "64")
+        assert not service._relpath_matches_quality("legacy.mp3", "192")
+
+    def test_clear_stale_variant(self, service: DownloadService, temp_root: Path) -> None:
+        write_media(temp_root, "youtube/Song [abc]__64k.webm")
+        t = make_track(variants={"64": "youtube/Song [abc]__64k.webm", "192": "youtube/missing__192k.opus"})
+        service._clear_stale_variant(t, "192")
+        assert t.media_variants == {"64": "youtube/Song [abc]__64k.webm"}
+
+    def test_clear_stale_variant_keeps_existing(self, service: DownloadService, temp_root: Path) -> None:
+        write_media(temp_root, "youtube/Song [abc]__64k.webm")
+        t = make_track(variants={"64": "youtube/Song [abc]__64k.webm"})
+        service._clear_stale_variant(t, "64")
+        assert t.media_variants == {"64": "youtube/Song [abc]__64k.webm"}
+
+    def test_resolve_variant_relpath(self, service: DownloadService, temp_root: Path) -> None:
+        write_media(temp_root, "youtube/Song [dQw4w9WgXcQ]__64k.webm")
+        write_media(temp_root, "youtube/Other [aaaaaaaaaaa]__64k.webm")
+        t = make_track(video_id="dQw4w9WgXcQ")
+        assert service._resolve_variant_relpath(t, "64") == "youtube/Song [dQw4w9WgXcQ]__64k.webm"
+
+    def test_resolve_variant_relpath_missing(self, service: DownloadService) -> None:
+        t = make_track(video_id="dQw4w9WgXcQ")
+        assert service._resolve_variant_relpath(t, "64") is None
+
+    def test_youtube_video_id_for_track(self, service: DownloadService) -> None:
+        t = make_track(video_id="dQw4w9WgXcQ")
+        assert service._youtube_video_id_for_track(t) == "dQw4w9WgXcQ"
+
+        t2 = make_track(variants={"64": "youtube/Song [abcdefghijk]__64k.webm"})
+        assert service._youtube_video_id_for_track(t2) == "abcdefghijk"
+
+        t3 = make_track()
+        t3.url = "https://youtu.be/zzzzzzzzzzz"
+        assert service._youtube_video_id_for_track(t3) == "zzzzzzzzzzz"
+
+
+class TestLibraryMatches:
+    def test_matches_by_video_id(self, service: DownloadService) -> None:
+        pl = service.create_playlist("Mine", owner_id="u1")
+        t = make_track("Song", "Artist", video_id="dQw4w9WgXcQ")
+        pl.add_track(t)
+        rows = service.library_matches_for_hit("dQw4w9WgXcQ", "", "", "u1")
+        assert [r["track_id"] for r in rows] == [t.id]
+
+    def test_matches_by_title_and_artist(self, service: DownloadService) -> None:
+        pl = service.create_playlist("Mine", owner_id="u1")
+        t = make_track("  Song  ", "Artist")
+        pl.add_track(t)
+        rows = service.library_matches_for_hit("", "song", "artist", "u1")
+        assert [r["track_id"] for r in rows] == [t.id]
+
+    def test_is_owner_scoped(self, service: DownloadService) -> None:
+        mine = service.create_playlist("Mine", owner_id="u1")
+        mine.add_track(make_track("Song", "Artist", video_id="dQw4w9WgXcQ"))
+        other = service.create_playlist("Other", owner_id="u2")
+        other.add_track(make_track("Song", "Artist", video_id="dQw4w9WgXcQ"))
+
+        assert len(service.library_matches_for_hit("dQw4w9WgXcQ", "", "", "u1")) == 1
+        assert len(service.library_matches_for_hit("dQw4w9WgXcQ", "", "", "u2")) == 1
+        assert service.library_matches_for_hit("dQw4w9WgXcQ", "", "", None) == []
+
+    def test_find_canonical_downloaded_source(self, service: DownloadService, temp_root: Path) -> None:
+        write_media(temp_root, "youtube/Song [dQw4w9WgXcQ]__192k.opus")
+        pl = service.create_playlist("Mine", owner_id="u1")
+        t = make_track("Song", "Artist", video_id="dQw4w9WgXcQ")
+        t.media_relpath = "youtube/Song [dQw4w9WgXcQ]__192k.opus"
+        pl.add_track(t)
+
+        assert service.find_canonical_downloaded_source("u1", "dQw4w9WgXcQ", "", "") == (pl.id, t.id)
+        assert service.find_canonical_downloaded_source("u1", "dQw4w9WgXcQ", "", "", exclude_playlist_id=pl.id) is None
+
+
+class TestLikedSongs:
+    def test_like_requires_downloaded_file(self, service: DownloadService) -> None:
+        pl = service.create_playlist("Mine", owner_id="u1")
+        t = make_track("Song", "Artist", status=DownloadStatus.pending)
+        pl.add_track(t)
+        assert service.set_track_liked(pl.id, t.id, True, "u1") is False
+
+    def test_like_and_unlike(self, service: DownloadService, temp_root: Path) -> None:
+        write_media(temp_root, "youtube/Song [abc]__192k.opus")
+        pl = service.create_playlist("Mine", owner_id="u1")
+        t = make_track("Song", "Artist", variants={"192": "youtube/Song [abc]__192k.opus"})
+        pl.add_track(t)
+
+        assert service.set_track_liked(pl.id, t.id, True, "u1") is True
+        liked = service._ensure_liked_songs_playlist("u1")
+        assert len(liked.tracks) == 1
+        assert liked.tracks[0].liked_source_playlist_id == pl.id
+        assert liked.tracks[0].liked_source_track_id == t.id
+
+        # Idempotent
+        assert service.set_track_liked(pl.id, t.id, True, "u1") is True
+        assert len(liked.tracks) == 1
+
+        assert service.set_track_liked(pl.id, t.id, False, "u1") is True
+        assert liked.tracks == []
+
+    def test_liked_keys(self, service: DownloadService, temp_root: Path) -> None:
+        write_media(temp_root, "youtube/Song [abc]__192k.opus")
+        pl = service.create_playlist("Mine", owner_id="u1")
+        t = make_track("Song", "Artist", variants={"192": "youtube/Song [abc]__192k.opus"})
+        pl.add_track(t)
+        service.set_track_liked(pl.id, t.id, True, "u1")
+        assert service.list_liked_entry_keys("u1") == [f"{pl.id}|{t.id}"]
+        assert service.list_liked_entry_keys(None) == []
+
+
+class TestDelete:
+    def test_delete_track_removes_file(self, service: DownloadService, temp_root: Path) -> None:
+        path = write_media(temp_root, "youtube/Song [abc]__192k.opus")
+        pl = service.create_playlist("Mine", owner_id="u1")
+        t = make_track("Song", "Artist", variants={"192": "youtube/Song [abc]__192k.opus"})
+        t.media_relpath = "youtube/Song [abc]__192k.opus"
+        pl.add_track(t)
+
+        assert service.delete_track(pl.id, t.id) is True
+        assert pl.tracks == []
+        assert not path.exists()
+
+    def test_delete_track_keeps_file_when_asked(self, service: DownloadService, temp_root: Path) -> None:
+        path = write_media(temp_root, "youtube/Song [abc]__192k.opus")
+        pl = service.create_playlist("Mine", owner_id="u1")
+        t = make_track("Song", "Artist", variants={"192": "youtube/Song [abc]__192k.opus"})
+        t.media_relpath = "youtube/Song [abc]__192k.opus"
+        pl.add_track(t)
+
+        assert service.delete_track(pl.id, t.id, unlink_media=False) is True
+        assert path.exists()
+
+
+class TestProgress:
+    def test_downloads_remaining_counts_queued(self, service: DownloadService) -> None:
+        pl = service.create_playlist("Mine", owner_id="u1")
+        pl.add_track(make_track("A", "B", status=DownloadStatus.queued))
+        pl.add_track(make_track("C", "D", status=DownloadStatus.downloading))
+        pl.add_track(make_track("E", "F", status=DownloadStatus.done))
+        assert service.downloads_remaining_count("u1") == 2
+        assert service.downloads_remaining_count(None) == 0
+
+    def test_progress_payload_filters_jobs_by_owner(self, service: DownloadService) -> None:
+        mine = service.create_playlist("Mine", owner_id="u1")
+        t1 = make_track("A", "B", status=DownloadStatus.downloading)
+        mine.add_track(t1)
+        other = service.create_playlist("Other", owner_id="u2")
+        t2 = make_track("C", "D", status=DownloadStatus.downloading)
+        other.add_track(t2)
+
+        service.progress = {
+            t1.id: {"title": "A", "artist": "B", "percent": 10},
+            t2.id: {"title": "C", "artist": "D", "percent": 20},
+        }
+        payload = service.progress_api_payload("u1")
+        assert list(payload["jobs"]) == [t1.id]
+        assert payload["remaining"] == 1
+
+    def test_error_rows_are_owner_scoped(self, service: DownloadService) -> None:
+        mine = service.create_playlist("Mine", owner_id="u1")
+        mine.add_track(make_track("A", "B", status=DownloadStatus.error))
+        other = service.create_playlist("Other", owner_id="u2")
+        other.add_track(make_track("C", "D", status=DownloadStatus.error))
+
+        service._invalidate_error_rows_cache()
+        assert [r["title"] for r in service.error_tracks_for_sidebar("u1")] == ["A"]
+        assert [r["title"] for r in service.error_tracks_for_sidebar("u2")] == ["C"]
+        assert service.error_tracks_for_sidebar(None) == []
+
+    def test_queue_all_quality_downloads_counts(self, service: DownloadService, temp_root: Path, monkeypatch) -> None:
+        write_media(temp_root, "youtube/A [aaaaaaaaaaa]__64k.webm")
+        pl = service.create_playlist("Mine", owner_id="u1")
+        have = make_track("A", "B", video_id="aaaaaaaaaaa", variants={"64": "youtube/A [aaaaaaaaaaa]__64k.webm"})
+        need = make_track("C", "D", video_id="bbbbbbbbbbb")
+        no_source = make_track("", "")
+        no_source.url = None
+        no_source.youtube_video_id = None
+        pl.add_track(have)
+        pl.add_track(need)
+        pl.add_track(no_source)
+
+        monkeypatch.setattr(service, "start_track_download", lambda *a, **k: True)
+        result = service.queue_all_quality_downloads("64", "u1")
+        assert result["queued"] == 1
+        assert result["already_have"] == 1
+        assert result["ineligible"] == 1
+        assert result["quality"] == "64"
+
+
+class TestStartupHelpers:
+    def test_sync_from_download_folders(self, service: DownloadService, temp_root: Path) -> None:
+        folder = temp_root / "downloads" / "My Folder"
+        folder.mkdir()
+        (folder / "Artist - Song.mp3").write_bytes(b"audio")
+
+        _ORIG_SYNC_FROM_DOWNLOAD_FOLDERS(service)
+
+        pl = next(p for p in service.playlists.values() if p.name == "My Folder")
+        assert len(pl.tracks) == 1
+        assert pl.tracks[0].artist == "Artist"
+        assert pl.tracks[0].title == "Song"
+        assert pl.tracks[0].status == DownloadStatus.done
+        assert pl.tracks[0].media_relpath == "My Folder/Artist - Song.mp3"
+
+    def test_sync_skips_youtube_folder(self, service: DownloadService, temp_root: Path) -> None:
+        (temp_root / "downloads" / "youtube" / "x.mp3").write_bytes(b"audio")
+        _ORIG_SYNC_FROM_DOWNLOAD_FOLDERS(service)
+        assert all(pl.name != "youtube" for pl in service.playlists.values())
+
+    def test_reset_interrupted_downloads(self, service: DownloadService) -> None:
+        pl = service.create_playlist("Mine", owner_id="u1")
+        t = make_track("A", "B", status=DownloadStatus.downloading)
+        pl.add_track(t)
+        _ORIG_RESET_INTERRUPTED(service)
+        assert t.status == DownloadStatus.queued

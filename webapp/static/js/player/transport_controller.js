@@ -1,7 +1,7 @@
 /**
  * Controller owning all transport concerns for the playlist page.
  */
-import { PlaylistHomeViewController } from '../playlist/home_view_controller.js';
+import { PlaylistPlayLog } from '../playlist/play_log.js?v=1';
 
 export class PlaylistTransportController {
     /** @param {import('./player_state.js').PlaylistPlayerState} state */
@@ -222,29 +222,8 @@ export class PlaylistTransportController {
         document.body.addEventListener('click', (e) => {
             const homeRow = e.target.closest('.home-song-row');
             if (homeRow && !e.target.closest('.track-row-like')) {
-                const tid = homeRow.getAttribute('data-track-id');
-                const pid = homeRow.getAttribute('data-playlist-id');
-                const src = homeRow.getAttribute('data-play-src');
-                if (tid && pid && src) {
-                    // Keep the visible ranking as the playback order so next/prev
-                    // follow the list the user is looking at.
-                    hub.libraryOrder = Array.from(document.querySelectorAll('.home-song-row'))
-                        .map((row) => ({
-                            playlist_id: row.getAttribute('data-playlist-id') || '',
-                            track_id: row.getAttribute('data-track-id') || '',
-                            play_src: row.getAttribute('data-play-src') || '',
-                            title: row.getAttribute('data-title') || '',
-                            artist: row.getAttribute('data-artist') || '',
-                        }))
-                        .filter((row) => row.playlist_id && row.track_id && row.play_src);
-                    this.playLibraryEntry({
-                        playlist_id: pid,
-                        track_id: tid,
-                        play_src: src,
-                        title: homeRow.getAttribute('data-title') || '',
-                        artist: homeRow.getAttribute('data-artist') || '',
-                    });
-                }
+                const entry = this.library_entry_from_row(homeRow);
+                if (entry) void this.playLibraryEntry(entry);
                 return;
             }
             const playBtn = e.target.closest('.track-play');
@@ -322,14 +301,47 @@ export class PlaylistTransportController {
             (v === 0 ? 'fa-volume-xmark' : v < 0.45 ? 'fa-volume-low' : 'fa-volume-high');
     }
 
-    library_pool_playable() {
-        const hub = this.state.hub;
+    /** Library entries that can actually be played, from the pool or a given list. */
+    library_pool_playable(list) {
         const prefs = window.SpolocalQualityPrefs;
-        return (Array.isArray(hub.libraryPool) ? hub.libraryPool : []).filter((t) => {
+        const pool = Array.isArray(list) ? list : this.state.hub.libraryPool;
+        return (Array.isArray(pool) ? pool : []).filter((t) => {
             if (!t) return false;
             const src = prefs ? prefs.resolvePlaySrc(t) : t.play_src;
             return !!src;
         });
+    }
+
+    /** Entry described by a home song row. */
+    library_entry_from_row(row) {
+        const entry = {
+            playlist_id: row.getAttribute('data-playlist-id') || '',
+            track_id: row.getAttribute('data-track-id') || '',
+            play_src: row.getAttribute('data-play-src') || '',
+            title: row.getAttribute('data-title') || '',
+            artist: row.getAttribute('data-artist') || '',
+            album: row.getAttribute('data-album') || '',
+        };
+        return entry.playlist_id && entry.track_id && entry.play_src ? entry : null;
+    }
+
+    /** Restart the current track (repeat one, or prev at the start of a list). */
+    restart_current() {
+        const hub = this.state.hub;
+        if (!hub.audio) return;
+        hub.audio.currentTime = 0;
+        hub.audio.play().catch((err) => this.handlePlayError(err));
+    }
+
+    /** Stop at the end of a list when repeat is off. */
+    stop_playback() {
+        const hub = this.state.hub;
+        if (hub.audio) hub.audio.pause();
+    }
+
+    /** Wrap an index into [0, length) for repeat all. */
+    wrap_index(index, length) {
+        return ((index % length) + length) % length;
     }
 
     pick_random_library_entry(exclude_track_id) {
@@ -348,6 +360,18 @@ export class PlaylistTransportController {
     play_random_from_library() {
         const entry = this.pick_random_library_entry(null);
         if (entry) void this.playLibraryEntry(entry);
+    }
+
+    /** Random next track from the library; prev restarts the current one. */
+    play_random_library_next(delta) {
+        const hub = this.state.hub;
+        if (delta <= 0) {
+            if (hub.currentTrackId) this.restart_current();
+            return;
+        }
+        const next = this.pick_random_library_entry(hub.repeatMode === 'off' ? hub.currentTrackId : null);
+        if (next) void this.playLibraryEntry(next, 'library');
+        else this.stop_playback();
     }
 
     async playLibraryEntry(entry, context) {
@@ -458,24 +482,8 @@ export class PlaylistTransportController {
 
     playAtDeltaRandomMode(delta) {
         const hub = this.state.hub;
-        if (hub.repeatMode === 'one' && delta > 0 && hub.currentTrackId) {
-            hub.audio.currentTime = 0;
-            hub.audio.play().catch((err) => this.handlePlayError(err));
-            return true;
-        }
-        if (delta <= 0) {
-            if (hub.currentTrackId) {
-                hub.audio.currentTime = 0;
-                hub.audio.play().catch((err) => this.handlePlayError(err));
-            }
-            return true;
-        }
-        const next = this.pick_random_library_entry(hub.repeatMode === 'off' ? hub.currentTrackId : null);
-        if (!next) {
-            hub.audio.pause();
-            return true;
-        }
-        void this.playLibraryEntry(next);
+        if (hub.repeatMode === 'one' && delta > 0 && hub.currentTrackId) this.restart_current();
+        else this.play_random_library_next(delta);
         return true;
     }
 
@@ -614,15 +622,15 @@ export class PlaylistTransportController {
             return;
         }
         if (hub.randomMode && this.library_pool_playable().length) {
-            if (this.playAtDeltaRandomMode(delta)) return;
+            this.playAtDeltaRandomMode(delta);
+            return;
         }
         if (hub.playbackContext === 'library') {
             this.playAtDeltaLibrary(delta);
             return;
         }
         if (hub.repeatMode === 'one' && delta > 0 && hub.currentTrackId) {
-            hub.audio.currentTime = 0;
-            hub.audio.play().catch(err => this.handlePlayError(err));
+            this.restart_current();
             return;
         }
 
@@ -633,14 +641,7 @@ export class PlaylistTransportController {
             return;
         }
 
-        if (!hub.playable.length) {
-            if (delta > 0 && hub.manual_up_next_queue.length > 0 && this.queue) {
-                const nextEnt = hub.manual_up_next_queue.shift();
-                this.queue.persist_manual_queue_state();
-                this.queue.play_track_from_queue_entry(nextEnt);
-            }
-            return;
-        }
+        if (!hub.playable.length) return;
 
         const curInPl = hub.playable.some(function (t) { return t.id === hub.currentTrackId; });
         if (!curInPl) {
@@ -665,12 +666,8 @@ export class PlaylistTransportController {
 
     /** Playback order for library context: the visible ranking, else the whole pool. */
     library_playback_entries() {
-        const hub = this.state.hub;
-        const prefs = window.SpolocalQualityPrefs;
-        const usable = (t) => !!t && !!(prefs ? prefs.resolvePlaySrc(t) : t.play_src);
-        const order = Array.isArray(hub.libraryOrder) ? hub.libraryOrder.filter(usable) : [];
-        if (order.length) return order;
-        return this.library_pool_playable();
+        const visible = this.library_pool_playable(this.state.hub.libraryOrder);
+        return visible.length ? visible : this.library_pool_playable();
     }
 
     /** Index of the playing track inside the library pool, or -1. */
@@ -687,35 +684,20 @@ export class PlaylistTransportController {
     /** Advance inside the library pool (home / most played), honouring repeat and shuffle. */
     playAtDeltaLibrary(delta) {
         const hub = this.state.hub;
-        const pool = this.library_playback_entries();
-        if (!pool.length) {
-            hub.audio.pause();
-            return;
-        }
-        if (hub.repeatMode === 'one' && delta > 0) {
-            hub.audio.currentTime = 0;
-            hub.audio.play().catch((err) => this.handlePlayError(err));
-            return;
-        }
-        let next = null;
         if (hub.shuffleOn) {
-            next = this.pick_random_library_entry(hub.repeatMode === 'off' ? hub.currentTrackId : null);
-        } else {
-            let idx = this.library_entry_index(pool);
-            if (idx < 0) idx = delta > 0 ? -1 : 0;
-            let nextIdx = idx + delta;
-            if (hub.repeatMode === 'all') {
-                nextIdx = ((nextIdx % pool.length) + pool.length) % pool.length;
-            } else if (nextIdx < 0 || nextIdx >= pool.length) {
-                hub.audio.pause();
-                return;
-            }
-            next = pool[nextIdx];
-        }
-        if (!next) {
-            hub.audio.pause();
+            this.play_random_library_next(delta);
             return;
         }
+        const pool = this.library_playback_entries();
+        if (!pool.length) return this.stop_playback();
+        if (hub.repeatMode === 'one' && delta > 0) return this.restart_current();
+        let idx = this.library_entry_index(pool);
+        if (idx < 0) idx = delta > 0 ? -1 : 0;
+        const next_idx = idx + delta;
+        const next = hub.repeatMode === 'all'
+            ? pool[this.wrap_index(next_idx, pool.length)]
+            : (next_idx >= 0 && next_idx < pool.length ? pool[next_idx] : null);
+        if (!next) return this.stop_playback();
         void this.playLibraryEntry(next, 'library');
     }
 
@@ -730,38 +712,26 @@ export class PlaylistTransportController {
             if (!n) return;
             let idx = hub.currentTrackId ? hub.shuffledOrder.indexOf(hub.currentTrackId) : -1;
             if (idx < 0) idx = delta > 0 ? -1 : 0;
-            let nextIdx = idx + delta;
+            const next_idx = idx + delta;
             if (hub.repeatMode === 'all') {
-                nextIdx = (nextIdx % n + n) % n;
-            } else {
-                if (delta > 0 && hub.repeatMode === 'off' && idx === n - 1) {
-                    hub.audio.pause();
-                    return;
-                }
-                if (nextIdx >= n) nextIdx = n - 1;
-                if (nextIdx < 0) nextIdx = n - 1;
+                this.playTrackById(hub.shuffledOrder[this.wrap_index(next_idx, n)]);
+                return;
             }
-            this.playTrackById(hub.shuffledOrder[nextIdx]);
+            if (delta > 0 && idx === n - 1) return this.stop_playback();
+            const target = next_idx >= 0 && next_idx < n ? next_idx : n - 1;
+            this.playTrackById(hub.shuffledOrder[target]);
             return;
         }
 
-        let idx = hub.playable.findIndex(function (t) { return t.id === hub.currentTrackId; });
+        const n = hub.playable.length;
+        let idx = hub.playable.findIndex((t) => t.id === hub.currentTrackId);
         if (idx < 0) idx = delta > 0 ? -1 : 0;
-
-        if (delta > 0 && hub.repeatMode === 'off' && idx === hub.playable.length - 1) {
-            hub.audio.pause();
-            return;
-        }
-
-        let nextIdx;
-        if (hub.repeatMode === 'all') {
-            nextIdx = (idx + delta + hub.playable.length) % hub.playable.length;
-        } else {
-            nextIdx = idx + delta;
-            if (nextIdx >= hub.playable.length) nextIdx = hub.playable.length - 1;
-            if (nextIdx < 0) nextIdx = hub.playable.length - 1;
-        }
-        this.playTrackById(hub.playable[nextIdx].id);
+        if (delta > 0 && hub.repeatMode === 'off' && idx === n - 1) return this.stop_playback();
+        const next_idx = idx + delta;
+        const target = hub.repeatMode === 'all'
+            ? this.wrap_index(next_idx, n)
+            : (next_idx >= 0 && next_idx < n ? next_idx : n - 1);
+        this.playTrackById(hub.playable[target].id);
     }
 
     fmt(sec) {
@@ -1006,26 +976,21 @@ export class PlaylistTransportController {
         }
         const idx = this.rec_or_mix_row_index(rows);
         if (hub.repeatMode === 'one' && idx >= 0) {
-            hub.audio.currentTime = 0;
-            hub.audio.play().catch(() => {});
+            this.restart_current();
             return true;
         }
-        let next_row = null;
         const n = rows.length;
+        let next_row = null;
         if (hub.shuffleOn) {
             next_row = rows[Math.floor(Math.random() * n)];
         } else if (idx < 0) {
             next_row = delta > 0 ? rows[0] : rows[n - 1];
         } else {
-            let next_idx = idx + delta;
-            if (hub.repeatMode === 'all') {
-                next_idx = ((next_idx % n) + n) % n;
-                next_row = rows[next_idx];
-            } else if (next_idx >= 0 && next_idx < n) {
-                next_row = rows[next_idx];
-            } else if (delta < 0 && idx === 0) {
-                hub.audio.currentTime = 0;
-                hub.audio.play().catch((err) => this.handlePlayError(err));
+            const next_idx = idx + delta;
+            if (hub.repeatMode === 'all') next_row = rows[this.wrap_index(next_idx, n)];
+            else if (next_idx >= 0 && next_idx < n) next_row = rows[next_idx];
+            else if (delta < 0 && idx === 0) {
+                this.restart_current();
                 return true;
             }
         }
@@ -1137,10 +1102,10 @@ export class PlaylistTransportController {
         const track_id = String(hub.currentTrackId || '').trim();
         if (!playlist_id || !track_id) return;
 
-        const key = playlist_id + '|' + track_id;
+        const key = PlaylistPlayLog.track_key(playlist_id, track_id);
         if (hub._playCountedKey === key) return;
         hub._playCountedKey = key;
-        PlaylistHomeViewController.record_track_play(playlist_id, track_id);
+        PlaylistPlayLog.count_track(playlist_id, track_id);
         if (hub.isHomeView && this.home) this.home.render();
     }
 

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../../static/js/audio_quality_prefs.js';
 import { PlaylistHomeViewController } from '../../static/js/playlist/home_view_controller.js';
+import { PlaylistPlayLog } from '../../static/js/playlist/play_log.js';
 
 function track(playlistId, trackId, title, artist, extra = {}) {
     return {
@@ -56,41 +57,35 @@ beforeEach(() => {
     mountHomeDom();
 });
 
-describe('record_track_play', () => {
+describe('count_track', () => {
     it('counts the track, the playlist and the day', () => {
-        PlaylistHomeViewController.record_track_play('p1', 't1');
-        PlaylistHomeViewController.record_track_play('p1', 't1');
-        expect(PlaylistHomeViewController.read_track_plays()).toEqual({ 'p1|t1': 2 });
-        expect(PlaylistHomeViewController.read_playlist_plays()).toEqual({ p1: 2 });
-        const log = PlaylistHomeViewController.read_play_log();
-        const today = new Date().toISOString().slice(0, 10);
-        expect(log[today]).toBe(2);
+        PlaylistPlayLog.count_track('p1', 't1');
+        PlaylistPlayLog.count_track('p1', 't1');
+        expect(PlaylistPlayLog.track_plays()).toEqual({ 'p1|t1': 2 });
+        expect(PlaylistPlayLog.playlist_plays()).toEqual({ p1: 2 });
+        expect(PlaylistPlayLog.day_plays()[PlaylistPlayLog.day(0)]).toBe(2);
     });
 
     it('ignores rows without ids', () => {
-        PlaylistHomeViewController.record_track_play('', 't1');
-        PlaylistHomeViewController.record_track_play('p1', '');
-        expect(PlaylistHomeViewController.read_track_plays()).toEqual({});
+        PlaylistPlayLog.count_track('', 't1');
+        PlaylistPlayLog.count_track('p1', '');
+        expect(PlaylistPlayLog.track_plays()).toEqual({});
     });
 
     it('caps the play log at 60 days', () => {
         const log = {};
-        for (let i = 0; i < 80; i++) {
-            const day = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-            log[day] = 1;
-        }
+        for (let i = 0; i < 80; i++) log[PlaylistPlayLog.day(i)] = 1;
         localStorage.setItem('spolocal_play_log', JSON.stringify(log));
-        PlaylistHomeViewController.record_track_play('p1', 't1');
-        expect(Object.keys(PlaylistHomeViewController.read_play_log()).length).toBe(60);
+        PlaylistPlayLog.count_track('p1', 't1');
+        expect(Object.keys(PlaylistPlayLog.day_plays()).length).toBe(60);
     });
 });
 
 describe('week_plays', () => {
     it('sums the last seven days only', () => {
-        const today = new Date();
-        const day = (offset) => new Date(today.getTime() - offset * 86400000).toISOString().slice(0, 10);
-        const log = { [day(0)]: 2, [day(6)]: 3, [day(7)]: 100 };
-        expect(PlaylistHomeViewController.week_plays(log)).toBe(5);
+        const log = { [PlaylistPlayLog.day(0)]: 2, [PlaylistPlayLog.day(6)]: 3, [PlaylistPlayLog.day(7)]: 100 };
+        localStorage.setItem('spolocal_play_log', JSON.stringify(log));
+        expect(PlaylistPlayLog.week_plays()).toBe(5);
     });
 });
 

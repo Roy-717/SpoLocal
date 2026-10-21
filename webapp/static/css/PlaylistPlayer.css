@@ -838,29 +838,195 @@ body { background: #121212; color: #fff; }
     object-fit: cover !important;
     object-position: center !important;
 }
-/* Home: padding + 84px tiles (do not rely on Tailwind JIT for JS/home-only utilities). */
+/* Home: stats, story carousel and rails (do not rely on Tailwind JIT for JS/home-only utilities). */
 #playlist-scroll-root:has(#home-top-playlists) {
     padding-top: 1.5rem;
     padding-left: 1.5rem;
     padding-right: 1.5rem;
 }
 #home-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
     padding-bottom: 1.25rem;
-    margin-bottom: 1rem;
+    margin-bottom: 1.25rem;
     border-bottom: 1px solid #282828;
 }
-#home-header + section {
-    padding-top: 0.25rem;
+.home-section-title {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 0.75rem;
 }
-#home-top-playlists {
+.home-stats {
     display: grid;
-    grid-template-columns: repeat(auto-fill, 84px);
-    justify-content: start;
-    gap: 0.75rem 1rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 2rem;
 }
-#home-top-playlists > a {
-    width: 100%;
-    max-width: 84px;
+@media (min-width: 1024px) {
+    .home-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.home-stat {
+    border-radius: 0.5rem;
+    background: #181818;
+    padding: 0.75rem 0.875rem;
+    min-width: 0;
+}
+.home-stat-label {
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #727272;
+}
+.home-stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.2;
+    margin-top: 0.25rem;
+}
+.home-stat-meta {
+    font-size: 0.6875rem;
+    color: #B3B3B3;
+    margin-top: 0.125rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.home-story-track {
+    display: flex;
+    gap: 0.75rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    padding-bottom: 0.25rem;
+    scrollbar-width: none;
+}
+.home-story-track::-webkit-scrollbar { display: none; }
+.home-story-card {
+    position: relative;
+    flex: 0 0 auto;
+    width: min(78vw, 15rem);
+    aspect-ratio: 4 / 5;
+    scroll-snap-align: start;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    overflow: hidden;
+    color: #fff;
+    background: #282828;
+}
+.home-story-card:nth-child(5n+1) { background: linear-gradient(160deg, #1DB954 0%, #0b3d22 100%); }
+.home-story-card:nth-child(5n+2) { background: linear-gradient(160deg, #8e44ad 0%, #2c0f3d 100%); }
+.home-story-card:nth-child(5n+3) { background: linear-gradient(160deg, #e67e22 0%, #3d1f05 100%); }
+.home-story-card:nth-child(5n+4) { background: linear-gradient(160deg, #2980b9 0%, #0a2233 100%); }
+.home-story-card:nth-child(5n+5) { background: linear-gradient(160deg, #c0392b 0%, #330d09 100%); }
+.home-story-card--empty { background: #181818 !important; color: #727272; }
+.home-story-kicker {
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.85;
+}
+.home-story-value {
+    font-size: 1.5rem;
+    font-weight: 800;
+    line-height: 1.15;
+    margin-top: 0.25rem;
+    overflow-wrap: anywhere;
+}
+.home-story-meta {
+    font-size: 0.75rem;
+    opacity: 0.85;
+    margin-top: 0.375rem;
+}
+.home-story-art {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    width: 3.5rem;
+    height: 3.5rem;
+    border-radius: 0.375rem;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.25);
+}
+.home-story-art img { width: 100%; height: 100%; object-fit: cover; }
+.home-story-controls { display: flex; gap: 0.5rem; }
+.home-story-btn {
+    height: 1.75rem;
+    width: 1.75rem;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #282828;
+    color: #fff;
+    font-size: 0.6875rem;
+}
+.home-story-btn:hover { background: #3E3E3E; }
+.home-story-btn:disabled { opacity: 0.35; cursor: default; }
+.home-story-dots { display: flex; gap: 0.375rem; margin-top: 0.625rem; }
+.home-story-dot {
+    height: 0.375rem;
+    width: 0.375rem;
+    border-radius: 9999px;
+    background: #3E3E3E;
+    transition: width 0.2s, background 0.2s;
+}
+.home-story-dot--active { width: 1.25rem; background: #1DB954; }
+.home-rail {
+    display: flex;
+    gap: 0.75rem;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    padding-bottom: 0.25rem;
+    scrollbar-width: none;
+}
+.home-rail::-webkit-scrollbar { display: none; }
+.home-rail > a {
+    flex: 0 0 auto;
+    width: 8.5rem;
+    scroll-snap-align: start;
+    position: relative;
+}
+.home-rank {
+    position: absolute;
+    top: 0.375rem;
+    left: 0.375rem;
+    z-index: 1;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 0.25rem;
+    border-radius: 9999px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    font-size: 0.625rem;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.home-song-count {
+    font-size: 0.6875rem;
+    color: #727272;
+    font-variant-numeric: tabular-nums;
+}
+.home-song-bar {
+    height: 3px;
+    border-radius: 9999px;
+    background: #282828;
+    overflow: hidden;
+    margin-top: 0.375rem;
+}
+.home-song-bar > span {
+    display: block;
+    height: 100%;
+    background: #1DB954;
+    border-radius: 9999px;
 }
 /* ── Playlists: docked sidebar on lg+; slide-over sheet on smaller screens. Downloads + queue: right sheets. ── */
 #mobile-nav-backdrop.mobile-sheet-backdrop,

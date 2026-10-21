@@ -48,6 +48,9 @@ export class PlaylistTransportController {
 
         this.loadTransportPrefs();
         if (typeof this.load_volume_pref === 'function') this.load_volume_pref();
+        // Which list the current playback belongs to: 'playlist', 'library'
+        // (home / most played) or 'recs' (recommendations / radio mix).
+        hub.playbackContext = 'playlist';
 
         document.addEventListener('keydown', (e) => this.on_space_play_pause(e));
 
@@ -223,6 +226,17 @@ export class PlaylistTransportController {
                 const pid = homeRow.getAttribute('data-playlist-id');
                 const src = homeRow.getAttribute('data-play-src');
                 if (tid && pid && src) {
+                    // Keep the visible ranking as the playback order so next/prev
+                    // follow the list the user is looking at.
+                    hub.libraryOrder = Array.from(document.querySelectorAll('.home-song-row'))
+                        .map((row) => ({
+                            playlist_id: row.getAttribute('data-playlist-id') || '',
+                            track_id: row.getAttribute('data-track-id') || '',
+                            play_src: row.getAttribute('data-play-src') || '',
+                            title: row.getAttribute('data-title') || '',
+                            artist: row.getAttribute('data-artist') || '',
+                        }))
+                        .filter((row) => row.playlist_id && row.track_id && row.play_src);
                     this.playLibraryEntry({
                         playlist_id: pid,
                         track_id: tid,
@@ -336,12 +350,13 @@ export class PlaylistTransportController {
         if (entry) void this.playLibraryEntry(entry);
     }
 
-    async playLibraryEntry(entry) {
+    async playLibraryEntry(entry, context) {
         const hub = this.state.hub;
         if (!hub.audio || !entry) return;
         const trackId = String(entry.track_id || '');
         const playlistId = String(entry.playlist_id || '');
         if (!trackId || !playlistId) return;
+        hub.playbackContext = context === 'recs' ? 'recs' : 'library';
         const prefs = window.SpolocalQualityPrefs;
 
         if (hub.currentTrackId === trackId && hub.playingPlaylistId === playlistId && hub.audio.src) {
@@ -594,12 +609,16 @@ export class PlaylistTransportController {
     playAtDelta(delta) {
         const hub = this.state.hub;
         try { console.debug('[Playlist] playAtDelta', { delta: delta, current: hub.currentTrackId }); } catch (e) {}
-        if (this.isSearchStreamPlayback() || this.current_is_rec_or_mix_row()) {
+        if (this.isSearchStreamPlayback() || hub.playbackContext === 'recs') {
             this.skip_rec_or_mix_row(delta);
             return;
         }
         if (hub.randomMode && this.library_pool_playable().length) {
             if (this.playAtDeltaRandomMode(delta)) return;
+        }
+        if (hub.playbackContext === 'library') {
+            this.playAtDeltaLibrary(delta);
+            return;
         }
         if (hub.repeatMode === 'one' && delta > 0 && hub.currentTrackId) {
             hub.audio.currentTime = 0;
@@ -642,6 +661,62 @@ export class PlaylistTransportController {
         }
 
         this.playAtDeltaPlaylistBody(delta);
+    }
+
+    /** Playback order for library context: the visible ranking, else the whole pool. */
+    library_playback_entries() {
+        const hub = this.state.hub;
+        const prefs = window.SpolocalQualityPrefs;
+        const usable = (t) => !!t && !!(prefs ? prefs.resolvePlaySrc(t) : t.play_src);
+        const order = Array.isArray(hub.libraryOrder) ? hub.libraryOrder.filter(usable) : [];
+        if (order.length) return order;
+        return this.library_pool_playable();
+    }
+
+    /** Index of the playing track inside the library pool, or -1. */
+    library_entry_index(pool) {
+        const hub = this.state.hub;
+        const tid = String(hub.currentTrackId || '');
+        if (!tid) return -1;
+        const pid = String(hub.playingPlaylistId || '');
+        const exact = pool.findIndex((t) => String(t.track_id) === tid && String(t.playlist_id) === pid);
+        if (exact >= 0) return exact;
+        return pool.findIndex((t) => String(t.track_id) === tid);
+    }
+
+    /** Advance inside the library pool (home / most played), honouring repeat and shuffle. */
+    playAtDeltaLibrary(delta) {
+        const hub = this.state.hub;
+        const pool = this.library_playback_entries();
+        if (!pool.length) {
+            hub.audio.pause();
+            return;
+        }
+        if (hub.repeatMode === 'one' && delta > 0) {
+            hub.audio.currentTime = 0;
+            hub.audio.play().catch((err) => this.handlePlayError(err));
+            return;
+        }
+        let next = null;
+        if (hub.shuffleOn) {
+            next = this.pick_random_library_entry(hub.repeatMode === 'off' ? hub.currentTrackId : null);
+        } else {
+            let idx = this.library_entry_index(pool);
+            if (idx < 0) idx = delta > 0 ? -1 : 0;
+            let nextIdx = idx + delta;
+            if (hub.repeatMode === 'all') {
+                nextIdx = ((nextIdx % pool.length) + pool.length) % pool.length;
+            } else if (nextIdx < 0 || nextIdx >= pool.length) {
+                hub.audio.pause();
+                return;
+            }
+            next = pool[nextIdx];
+        }
+        if (!next) {
+            hub.audio.pause();
+            return;
+        }
+        void this.playLibraryEntry(next, 'library');
     }
 
     playAtDeltaPlaylistBody(delta) {
@@ -902,9 +977,6 @@ export class PlaylistTransportController {
         });
     }
 
-    current_is_rec_or_mix_row() {
-        return this.rec_or_mix_row_index(this.rec_or_mix_rows()) >= 0;
-    }
 
     play_rec_or_mix_row(row) {
         if (!row) return false;
@@ -1122,6 +1194,7 @@ export class PlaylistTransportController {
         const playGen = this._playGeneration;
 
         if (fromViewed) {
+            hub.playbackContext = 'playlist';
             const playingPidChanged = String(hub.playingPlaylistId || '') !== String(hub.playlistId || '');
             hub.playingPlaylistId = hub.playlistId;
             hub.playingTracks = hub.tracks.slice();

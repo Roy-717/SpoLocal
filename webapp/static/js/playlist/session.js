@@ -1,4 +1,4 @@
-import { PlaylistTransportController } from '../player/transport_controller.js?v=103';
+import { PlaylistTransportController } from '../player/transport_controller.js?v=104';
 import { PlaylistLikeController } from '../player/like_controller.js?v=1';
 import { PlaylistShuffleController } from '../player/shuffle_controller.js?v=1';
 import { PlaylistMediaSessionController } from '../player/media_session_controller.js?v=1';
@@ -9,7 +9,7 @@ import { PlaylistEditModalController } from '../ui/edit_modal_controller.js';
 import { PlaylistContextMenuController } from '../ui/context_menu_controller.js?v=93';
 import { PlaylistDownloadController } from '../services/download_controller.js?v=95';
 import { PlaylistColumnResizer } from '../ui/column_resizer.js';
-import { PlaylistHomeViewController } from './home_view_controller.js?v=89';
+import { PlaylistHomeViewController } from './home_view_controller.js?v=90';
 import { SettingsController } from '../ui/settings_controller.js?v=2';
 import { AccountController } from '../ui/account_controller.js?v=2';
 import { TrackInfoController } from '../ui/track_info_controller.js';

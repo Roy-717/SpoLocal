@@ -555,7 +555,7 @@ class AppShellController {
             if (typeof window.nextSpolocalStreamLoadGen === 'function') {
                 window.nextSpolocalStreamLoadGen();
             }
-            void Promise.resolve(hub.playLibraryEntry(local)).then(() => {
+            void Promise.resolve(hub.playLibraryEntry(local, 'recs')).then(() => {
                 this.sync_search_card_play_buttons();
             });
             return;
@@ -571,6 +571,7 @@ class AppShellController {
             this.next_stream_load_gen();
             hub.searchStreamActive = true;
             hub.searchStreamHit = hit;
+            hub.playbackContext = 'recs';
             hub._mediaDecodeRetries = 0;
             hub.audio.pause();
             const stream_src = AppShellController.streamSrcForVideoId(vid);

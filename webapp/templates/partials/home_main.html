@@ -3,30 +3,45 @@
 -->
 <div id="playlist-scroll-root" class="flex-1 min-h-0 overflow-y-auto px-6 pt-6 pb-[calc(var(--app-player-inset-mobile)_+_0.75rem)] lg:pb-24">
     <div id="home-header">
-        <h1 class="text-4xl font-bold tracking-tighter">Home</h1>
-        <p class="text-sm text-[#B3B3B3] mt-2">Your most played music</p>
-    </div>
-
-    <section class="mb-8">
-        <div class="flex items-center justify-between gap-3 mb-2">
-            <h2 class="text-lg font-bold text-white">Random play</h2>
-            <button type="button" id="home-random-toggle"
-                    class="rounded-full px-5 py-2 text-sm font-semibold bg-[#1DB954] text-black hover:bg-[#1ed760] transition">
-                Start random
-            </button>
+        <div class="min-w-0">
+            <h1 class="text-4xl font-bold tracking-tighter">Home</h1>
+            <p class="text-sm text-[#B3B3B3] mt-2">Your most played music</p>
         </div>
-        <p class="text-xs text-[#727272]">Plays a random song from your library; when it ends, picks another (respects repeat settings).</p>
-        <p id="home-random-status" class="hidden mt-2 text-xs text-[#1DB954] font-semibold">Random mode on</p>
+        <button type="button" id="home-random-toggle"
+                class="shrink-0 rounded-full px-5 py-2 text-sm font-semibold bg-[#1DB954] text-black hover:bg-[#1ed760] transition">
+            Start random
+        </button>
+    </div>
+    <p id="home-random-status" class="hidden -mt-2 mb-4 text-xs text-[#1DB954] font-semibold">Random mode on</p>
+
+    <section class="mb-8" aria-label="Listening stats">
+        <div id="home-stats" class="home-stats"></div>
+    </section>
+
+    <section class="mb-8" aria-label="Listening highlights">
+        <div class="flex items-center justify-between gap-3 mb-3">
+            <h2 class="home-section-title mb-0">Your listening</h2>
+            <div class="home-story-controls">
+                <button type="button" id="home-story-prev" class="home-story-btn" aria-label="Previous highlight">
+                    <i class="fa-solid fa-chevron-left"></i>
+                </button>
+                <button type="button" id="home-story-next" class="home-story-btn" aria-label="Next highlight">
+                    <i class="fa-solid fa-chevron-right"></i>
+                </button>
+            </div>
+        </div>
+        <div id="home-story-track" class="home-story-track" tabindex="0" aria-label="Listening highlights carousel"></div>
+        <div id="home-story-dots" class="home-story-dots"></div>
     </section>
 
     <section class="mb-8">
-        <h2 class="text-lg font-bold text-white mb-3">Most played playlists</h2>
-        <div id="home-top-playlists"></div>
+        <h2 class="home-section-title">Most played playlists</h2>
+        <div id="home-top-playlists" class="home-rail"></div>
         <p id="home-playlists-empty" class="hidden text-sm text-[#727272]">Play some playlists to see them here.</p>
     </section>
 
     <section>
-        <h2 class="text-lg font-bold text-white mb-3">Most played songs</h2>
+        <h2 class="home-section-title">Most played songs</h2>
         <div id="home-top-songs" class="flex flex-col gap-1"></div>
         <p id="home-songs-empty" class="hidden text-sm text-[#727272]">Play some tracks to see them here.</p>
     </section>

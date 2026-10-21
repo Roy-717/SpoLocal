@@ -642,6 +642,7 @@ async def api_create_playlist(body: CreatePlaylistBody, request: Request):
 async def api_playlist_view(request: Request, playlist_id: str):
     """HTML fragment + track payload for in-page playlist switching (query param avoids path parsing issues)."""
     pl = _owned_playlist_or_404(request, playlist_id)
+    uid = _owner_id(request)
     await asyncio.to_thread(service.hydrate_media_paths, pl, fill_albums=False, persist=False)
     tracks_payload = [_track_payload_row(t) for t in pl.tracks]
     tpl = templates.env.get_template("partials/playlist_main.html")
@@ -778,7 +779,10 @@ async def api_track_mix(
 async def api_spotify_resolve(url: str = Query(..., min_length=8)):
     """Resolve a Spotify track link to a YouTube search query (top bar -> search UI)."""
     try:
-        q = await run_in_threadpool(service.spotify_url_search_query, url.strip())
+        q = await run_in_threadpool(
+            service.spotify_url_search_query,
+            url.strip().split("?")[0].split("#")[0].strip(),
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not q:

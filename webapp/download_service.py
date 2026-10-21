@@ -1600,18 +1600,40 @@ class DownloadService:
 
     def spotify_url_search_query(self, raw: str) -> Optional[str]:
         """Spotify track URL -> YouTube search query (artist + title). Playlists return None."""
-        s = (raw or "").strip()
+        s = (raw or "").strip().split("?")[0].split("#")[0].strip()
         if not s:
             return None
         try:
-            kind, _sid = detect_spotify_url_type(s)
+            kind, tid = detect_spotify_url_type(s)
         except ValueError:
             return None
         if kind != "track":
             return None
-        info = self._embed.get_track_info(s)
-        artist = (info.artists or "").strip()
-        title = (info.title or "").strip()
+        artist = ""
+        title = ""
+        try:
+            info = self._embed.get_track_info(s)
+            artist = (info.artists or "").strip()
+            title = (info.title or "").strip()
+        except Exception:
+            pass
+        if not title:
+            try:
+                import requests
+
+                canon = f"https://open.spotify.com/track/{tid}"
+                resp = requests.get(
+                    "https://open.spotify.com/oembed",
+                    params={"url": canon},
+                    timeout=15,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    title = str(data.get("title") or "").strip()
+                    artist = str(data.get("author_name") or "").strip()
+            except Exception:
+                pass
         q = f"{artist} {title}".strip() if artist and title else (title or artist)
         return q or None
 

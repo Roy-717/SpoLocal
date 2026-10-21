@@ -156,7 +156,7 @@ export class PlaybackQualityController {
         return ok;
     }
 
-    async onPlaybackQualityChanged() {
+    async onPlaybackQualityChanged(allow_download = true) {
         const hub = this.state.hub;
         if (this.lyrics) {
             this.lyrics.reload_stream_video_if_loaded();
@@ -174,6 +174,9 @@ export class PlaybackQualityController {
         if (!t) return;
 
         if (!prefs.hasVariant(t, playback_q)) {
+            // A finished download must not start another one: if the variant is
+            // still missing the download failed, and retrying here would loop.
+            if (!allow_download) return;
             const ok = await this.ensurePlaybackVariantReady(t, pid, hub.currentTrackId, playback_q, this.transport._playGeneration, false);
             if (!ok) return;
             const row2 = await this.fetchTrackPayload(pid, hub.currentTrackId);

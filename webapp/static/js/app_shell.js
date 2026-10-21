@@ -127,9 +127,24 @@ class AppShellController {
         return /^https?:\/\//i.test(s) || /^spotify:/i.test(s);
     }
 
+    static normalizeSpotifyInput(s) {
+        const raw = String(s || '').trim();
+        if (!raw) return '';
+        if (/^spotify:/i.test(raw)) {
+            return raw.split('?')[0].split('#')[0];
+        }
+        try {
+            const u = new URL(raw);
+            if (/spotify\.com$/i.test(u.hostname) || u.hostname.endsWith('.spotify.com')) {
+                return (u.origin + u.pathname).replace(/\/$/, '');
+            }
+        } catch (e) { /* ignore */ }
+        return raw.split('?')[0].split('#')[0];
+    }
+
     /** @returns {'track'|'playlist'|null} */
     static spotifyUrlKind(s) {
-        const t = String(s || '').trim();
+        const t = AppShellController.normalizeSpotifyInput(s);
         if (!t) return null;
         if (/open\.spotify\.com\/(?:intl-[a-z]{2}\/)?track(?:\/|$)/i.test(t) || /^spotify:track:/i.test(t)) {
             return 'track';
@@ -141,11 +156,23 @@ class AppShellController {
     }
 
     async resolveSpotifyTrackAndSearch(spotifyUrl) {
-        const r = await fetch('/api/spotify/resolve?url=' + encodeURIComponent(spotifyUrl.trim()), {
+        const clean = AppShellController.normalizeSpotifyInput(spotifyUrl);
+        const r = await fetch('/api/spotify/resolve?url=' + encodeURIComponent(clean), {
             headers: { Accept: 'application/json' },
         });
-        const data = await AppShellController.parseJsonApiResponse(r, 'Could not read that Spotify link.');
-        const q = data && data.search_query ? String(data.search_query).trim() : '';
+        let q = '';
+        try {
+            const data = await AppShellController.parseJsonApiResponse(r, 'Could not read that Spotify link.');
+            q = data && data.search_query ? String(data.search_query).trim() : '';
+        } catch (e) {
+            const msg = e && e.message ? String(e.message) : '';
+            if (r.status === 404 || msg === 'Not Found') {
+                throw new Error(
+                    'Spotify link lookup is not available on this server (restart SpoLocal after updating). Try searching by song name.',
+                );
+            }
+            throw e;
+        }
         if (!q) throw new Error('No search query from Spotify.');
         if (this.topInput) this.topInput.value = q;
         await this.runGlobalSearch(q);
@@ -1254,6 +1281,10 @@ class AppShellController {
 
     async runGlobalSearch(q, offset, opts) {
         if (!this.gPanel || !this.gList) return;
+        if (AppShellController.spotifyUrlKind(q) === 'track') {
+            await this.resolveSpotifyTrackAndSearch(q);
+            return;
+        }
         if (offset == null) offset = 0;
         const silent = !!(opts && opts.silent);
         const fresh = !!(opts && opts.fresh);

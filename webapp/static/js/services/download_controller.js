@@ -374,7 +374,8 @@ export class PlaylistDownloadController {
                     } catch (homeErr) {}
                 }
                 if (this.session.transport) {
-                    this.session.transport.quality.onPlaybackQualityChanged();
+                    // Re-resolve the source only; never start another download here.
+                    this.session.transport.quality.onPlaybackQualityChanged(false);
                 }
                 // A download that just finished may be the track currently playing;
                 // lyrics fetched before it completed show "download to enable saving".

@@ -1010,8 +1010,6 @@ export class PlaylistTransportController {
         if (!hub || !hub.audio) return false;
         const raw_src = String(hub.audio.currentSrc || hub.audio.src || '').trim();
         if (!raw_src) return false;
-        const prefs = window.SpolocalQualityPrefs;
-        if (prefs && prefs.normalizeMediaPath(raw_src)) return false;
         try {
             const u = new URL(raw_src, window.location.href);
             if (u.pathname.startsWith('/media/')) return false;

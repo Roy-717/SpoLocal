@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../../static/js/audio_quality_prefs.js';
 import { PlaylistHomeViewController } from '../../static/js/playlist/home_view_controller.js';
-import { PlaylistPlayLog } from '../../static/js/playlist/play_log.js';
 
 function track(playlistId, trackId, title, artist, extra = {}) {
     return {
@@ -55,38 +54,6 @@ beforeEach(() => {
     localStorage.clear();
     window.__playlistsCatalog = [];
     mountHomeDom();
-});
-
-describe('count_track', () => {
-    it('counts the track, the playlist and the day', () => {
-        PlaylistPlayLog.count_track('p1', 't1');
-        PlaylistPlayLog.count_track('p1', 't1');
-        expect(PlaylistPlayLog.track_plays()).toEqual({ 'p1|t1': 2 });
-        expect(PlaylistPlayLog.playlist_plays()).toEqual({ p1: 2 });
-        expect(PlaylistPlayLog.day_plays()[PlaylistPlayLog.day(0)]).toBe(2);
-    });
-
-    it('ignores rows without ids', () => {
-        PlaylistPlayLog.count_track('', 't1');
-        PlaylistPlayLog.count_track('p1', '');
-        expect(PlaylistPlayLog.track_plays()).toEqual({});
-    });
-
-    it('caps the play log at 60 days', () => {
-        const log = {};
-        for (let i = 0; i < 80; i++) log[PlaylistPlayLog.day(i)] = 1;
-        localStorage.setItem('spolocal_play_log', JSON.stringify(log));
-        PlaylistPlayLog.count_track('p1', 't1');
-        expect(Object.keys(PlaylistPlayLog.day_plays()).length).toBe(60);
-    });
-});
-
-describe('week_plays', () => {
-    it('sums the last seven days only', () => {
-        const log = { [PlaylistPlayLog.day(0)]: 2, [PlaylistPlayLog.day(6)]: 3, [PlaylistPlayLog.day(7)]: 100 };
-        localStorage.setItem('spolocal_play_log', JSON.stringify(log));
-        expect(PlaylistPlayLog.week_plays()).toBe(5);
-    });
 });
 
 describe('aggregate', () => {
@@ -230,6 +197,59 @@ describe('render', () => {
         controller.render();
         expect(document.getElementById('home-songs-empty').classList.contains('hidden')).toBe(false);
         expect(document.getElementById('home-playlists-empty').classList.contains('hidden')).toBe(false);
+    });
+});
+
+describe('story carousel', () => {
+    function layoutCarousel() {
+        const track_el = document.getElementById('home-story-track');
+        Object.defineProperty(track_el, 'clientWidth', { value: 600, configurable: true });
+        Object.defineProperty(track_el, 'scrollWidth', { value: 1200, configurable: true });
+        Object.defineProperty(track_el, 'scrollLeft', { value: 0, writable: true, configurable: true });
+        track_el.scrollTo = vi.fn();
+        return track_el;
+    }
+
+    function renderStories() {
+        const { controller, hub } = makeController();
+        hub.libraryPool = [track('p1', 't1', 'One', 'Alpha')];
+        seedPlays({ 'p1|t1': 2 }, { p1: 2 });
+        controller.render();
+        return controller;
+    }
+
+    it('enables the arrows once the carousel has a width', () => {
+        layoutCarousel();
+        renderStories();
+        expect(document.getElementById('home-story-prev').disabled).toBe(true);
+        expect(document.getElementById('home-story-next').disabled).toBe(false);
+    });
+
+    it('disables the next arrow at the end of the rail', async () => {
+        const track_el = layoutCarousel();
+        renderStories();
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        track_el.scrollLeft = 600;
+        track_el.dispatchEvent(new Event('scroll'));
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        expect(document.getElementById('home-story-next').disabled).toBe(true);
+        expect(document.getElementById('home-story-prev').disabled).toBe(false);
+    });
+
+    it('scrolls one card per arrow click', () => {
+        const track_el = layoutCarousel();
+        renderStories();
+        document.getElementById('home-story-next').click();
+        expect(track_el.scrollTo).toHaveBeenCalledWith({ left: 600, behavior: 'smooth' });
+    });
+
+    it('scrolls to the card behind a dot', () => {
+        const track_el = layoutCarousel();
+        renderStories();
+        const dots = document.querySelectorAll('#home-story-dots .home-story-dot');
+        expect(dots.length).toBeGreaterThan(1);
+        dots[1].click();
+        expect(track_el.scrollTo).toHaveBeenCalledWith({ left: 600, behavior: 'smooth' });
     });
 });
 

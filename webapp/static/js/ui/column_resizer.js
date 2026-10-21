@@ -29,22 +29,28 @@ export class PlaylistColumnResizer {
             return px;
         };
 
+        // Headers and cols are matched by data-col, not by position: the
+        // colgroup order does not have to follow the header order.
+        const col_by_key = new Map(cols.map((col) => [col.dataset.col, col]));
+        const header_by_key = new Map(headers.map((header) => [header.dataset.col, header]));
+
         const freezeCurrentWidths = () => {
-            headers.forEach((header, index) => {
-                const col = cols[index];
+            headers.forEach((header) => {
+                const col = col_by_key.get(header.dataset.col);
                 if (!col) return;
                 setColWidth(col, header.getBoundingClientRect().width);
             });
         };
 
         const persistWidths = () => {
-            const widths = cols.map((col, idx) => {
+            const widths = cols.map((col) => {
                 const parsed = parseFloat(col.style.width);
                 if (Number.isFinite(parsed)) {
                     return Math.max(this.MIN_WIDTH, Math.round(parsed));
                 }
-                if (headers[idx]) {
-                    return Math.max(this.MIN_WIDTH, Math.round(headers[idx].getBoundingClientRect().width));
+                const header = header_by_key.get(col.dataset.col);
+                if (header) {
+                    return Math.max(this.MIN_WIDTH, Math.round(header.getBoundingClientRect().width));
                 }
                 return this.MIN_WIDTH;
             });

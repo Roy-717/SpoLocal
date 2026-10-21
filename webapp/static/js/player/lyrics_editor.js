@@ -163,8 +163,9 @@ export class LyricsEditorController {
             gap.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const prevMs = hub.lrcEditLines[index] ? hub.lrcEditLines[index].time_ms : 0;
-                const nextMs = hub.lrcEditLines[index + 1] ? hub.lrcEditLines[index + 1].time_ms : prevMs + 2000;
-                const newTimeMs = Math.round((prevMs + nextMs) / 2);
+                const next = hub.lrcEditLines[index + 1];
+                // No next line: place the new one two seconds after the last.
+                const newTimeMs = next ? Math.round((prevMs + next.time_ms) / 2) : prevMs + 2000;
                 hub.lrcEditLines.splice(index + 1, 0, { time_ms: newTimeMs, text: '' });
                 this.renderLrcLinesInEditor();
             });

@@ -230,31 +230,34 @@ export class PlaylistHomeViewController {
         return card;
     }
 
+    /** Distance between two cards, gap included. */
     story_step() {
         const track_el = document.getElementById('home-story-track');
-        const card = track_el && track_el.firstElementChild;
+        if (!track_el) return 0;
+        const cards = track_el.children;
+        if (cards.length > 1) {
+            const step = cards[1].offsetLeft - cards[0].offsetLeft;
+            if (step > 0) return step;
+        }
+        const card = cards[0];
         if (!card) return 0;
-        let gap = 0;
-        try {
-            gap = parseFloat(getComputedStyle(track_el).columnGap) || 0;
-        } catch (e) {}
-        return card.getBoundingClientRect().width + gap;
+        return card.getBoundingClientRect().width || track_el.clientWidth;
     }
 
     scroll_story(direction) {
-        this.scroll_story_to(this.story_step() * direction, true);
+        const track_el = document.getElementById('home-story-track');
+        const step = this.story_step();
+        if (!track_el || !step) return;
+        this.scroll_to_story(Math.round(track_el.scrollLeft / step) + direction);
     }
 
+    /** Absolute scroll, so scroll-snap cannot cancel a relative step. */
     scroll_to_story(index) {
-        this.scroll_story_to(this.story_step() * index, false);
-    }
-
-    scroll_story_to(left, relative) {
         const track_el = document.getElementById('home-story-track');
         if (!track_el) return;
-        const opts = { left: left, behavior: 'smooth' };
-        if (relative) track_el.scrollBy(opts);
-        else track_el.scrollTo(opts);
+        const last = Math.max(0, track_el.children.length - 1);
+        const target = Math.min(Math.max(index, 0), last);
+        track_el.scrollTo({ left: this.story_step() * target, behavior: 'smooth' });
     }
 
     bind_story_controls() {
@@ -272,6 +275,11 @@ export class PlaylistHomeViewController {
                 e.preventDefault();
                 this.scroll_story(e.key === 'ArrowRight' ? 1 : -1);
             });
+            // The first sync can run before the carousel has a width, which
+            // would leave both arrows disabled with no scroll event to fix it.
+            if (typeof ResizeObserver === 'function') {
+                new ResizeObserver(() => this.sync_story_ui()).observe(track_el);
+            }
         }
         Dom.bind_once(document.getElementById('home-story-prev'), 'prev', 'click', () => this.scroll_story(-1));
         Dom.bind_once(document.getElementById('home-story-next'), 'next', 'click', () => this.scroll_story(1));
@@ -280,7 +288,7 @@ export class PlaylistHomeViewController {
 
     sync_story_ui() {
         const track_el = document.getElementById('home-story-track');
-        if (!track_el) return;
+        if (!track_el || !track_el.clientWidth) return;
         const dots = document.getElementById('home-story-dots');
         const prev = document.getElementById('home-story-prev');
         const next = document.getElementById('home-story-next');

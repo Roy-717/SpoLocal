@@ -1,6 +1,6 @@
 import { LyricsColorExtractor } from './lyrics_colors.js?v=1';
 import { LyricsVisualizerController } from './lyrics_visualizer.js?v=1';
-import { LyricsEditorController } from './lyrics_editor.js?v=1';
+import { LyricsEditorController } from './lyrics_editor.js?v=2';
 
 /**
  * Controller for lyrics display, fetching, and editing.

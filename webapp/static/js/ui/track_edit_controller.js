@@ -53,9 +53,11 @@ export class TrackEditController {
     open(playlist_id, track_id, title, artist, album) {
         const hub = this.state.hub;
         if (!hub.trackEditModal) return;
-        this._playlist_id = String(playlist_id || '').trim();
-        this._track_id = String(track_id || '').trim();
-        if (!this._playlist_id || !this._track_id) return;
+        const pid = String(playlist_id || '').trim();
+        const tid = String(track_id || '').trim();
+        if (!pid || !tid) return;
+        this._playlist_id = pid;
+        this._track_id = tid;
         hub.trackEditTitleInput.value = title != null ? String(title) : '';
         hub.trackEditArtistInput.value = artist != null ? String(artist) : '';
         hub.trackEditAlbumInput.value = album != null ? String(album) : '';

@@ -297,3 +297,45 @@ class TestSearchScoping:
         assert resp.status_code == 200
         matches = resp.json()["hits"][0]["library_matches"]
         assert [m["track_id"] for m in matches] == [pl.tracks[0].id]
+
+
+class TestPlaylistRecommendations:
+    def test_passes_playlist_artists_to_seed_picker(
+        self, client, service, logged_in, monkeypatch, main_module
+    ) -> None:
+        _, user_id = logged_in
+        pl = make_playlist(service, "Mine", user_id, tracks=3)
+        for i, track in enumerate(pl.tracks):
+            track.youtube_video_id = f"vid{i:08d}"
+            track.artist = f"Artist {i}"
+
+        seen: dict = {}
+
+        class FakeMix:
+            def __init__(self, root=None) -> None:
+                pass
+
+            def pick_seed_ids(self, video_ids, max_seeds=None, artists=None):
+                seen["pick_artists"] = list(artists or [])
+                return [v for v in video_ids if v]
+
+            def mix_for_seeds(self, video_ids, limit=12, artists=None):
+                seen["mix_artists"] = list(artists or [])
+                return [{"video_id": "dQw4w9WgXcQ", "title": "T", "artist": "A", "channel": "A"}]
+
+        async def noop(hits):
+            return None
+
+        async def noop_prefetch(ids):
+            return None
+
+        monkeypatch.setattr(main_module, "YoutubePlaylistMix", FakeMix)
+        monkeypatch.setattr(main_module.streaming, "annotate_search_stream_src", noop)
+        monkeypatch.setattr(main_module.streaming, "prefetch_mix_stream_payloads", noop_prefetch)
+        main_module._recommendation_cache.clear()
+
+        resp = client.get(f"/api/playlist/recommendations?playlist_id={pl.id}&limit=12")
+        assert resp.status_code == 200
+        assert [h["video_id"] for h in resp.json()] == ["dQw4w9WgXcQ"]
+        assert seen["pick_artists"] == ["Artist 0", "Artist 1", "Artist 2"]
+        assert seen["mix_artists"] == ["Artist 0", "Artist 1", "Artist 2"]

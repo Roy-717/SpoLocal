@@ -720,8 +720,9 @@ async def api_playlist_recommendations(
     pl = _owned_playlist_or_404(request, playlist_id)
     lim = max(1, min(int(limit), 30))
     seed_ids = [t.resolved_youtube_video_id() for t in (pl.tracks or [])]
-    seed_key = ",".join(YoutubePlaylistMix().pick_seed_ids(seed_ids))
-    cache_key = f"{pl.id}|{lim}|rdmix1|{seed_key}"
+    seed_artists = [t.artist or "" for t in (pl.tracks or [])]
+    seed_key = ",".join(YoutubePlaylistMix().pick_seed_ids(seed_ids, artists=seed_artists))
+    cache_key = f"{pl.id}|{lim}|rdmix2|{seed_key}"
 
     now = _now_ts()
     cached_hits: list[dict[str, Any]] | None = None
@@ -735,7 +736,7 @@ async def api_playlist_recommendations(
 
     if cached_hits is None:
         def _load_hits() -> list[dict[str, Any]]:
-            return YoutubePlaylistMix(root).mix_for_seeds(seed_ids, lim)[:lim]
+            return YoutubePlaylistMix(root).mix_for_seeds(seed_ids, lim, artists=seed_artists)[:lim]
 
         loop = asyncio.get_event_loop()
         cached_hits = await loop.run_in_executor(None, _load_hits)

@@ -1,5 +1,6 @@
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import yt_dlp
@@ -290,7 +291,12 @@ def _youtube_hit_from_entry(entry: dict) -> dict | None:
 
 
 class YoutubePlaylistMix:
-    """Build Recommended-for-you hits from YouTube Mix (RD) of a few playlist seeds."""
+    """Build Recommended-for-you hits from YouTube Mix (RD) of playlist seeds."""
+
+    # Six radios cover a playlist's vibe far better than three, while the
+    # concurrent fetch keeps wall time close to a single radio.
+    DEFAULT_MAX_SEEDS = 6
+    MAX_PARALLEL_SEEDS = 6
 
     def __init__(self, project_root: Path | None = None) -> None:
         self._root = project_root or Path(__file__).resolve().parent
@@ -300,8 +306,36 @@ class YoutubePlaylistMix:
         vid = (video_id or "").strip()
         return f"https://www.youtube.com/watch?v={vid}&list=RD{vid}"
 
-    def pick_seed_ids(self, video_ids: list[str], max_seeds: int = 3) -> list[str]:
-        """Spread unique 11-char ids across the playlist so the mix is not one-song radio."""
+    @staticmethod
+    def _spread_picks(items: list[str], count: int) -> list[str]:
+        """Evenly spaced picks across an ordered list, first and last included."""
+        if count <= 0 or not items:
+            return []
+        if len(items) <= count:
+            return list(items)
+        if count == 1:
+            return [items[0]]
+        last = len(items) - 1
+        picks: list[str] = []
+        for i in range(count):
+            idx = round(i * last / (count - 1))
+            if items[idx] not in picks:
+                picks.append(items[idx])
+        return picks
+
+    def pick_seed_ids(
+        self,
+        video_ids: list[str],
+        max_seeds: int | None = None,
+        artists: list[str] | None = None,
+    ) -> list[str]:
+        """Spread unique 11-char ids across the playlist, preferring distinct artists.
+
+        ``artists`` is parallel to ``video_ids``. When given, the spread picks are
+        filtered so one artist cannot dominate the radios, then topped up from the
+        remaining spread order.
+        """
+        limit = self.DEFAULT_MAX_SEEDS if max_seeds is None else max_seeds
         unique: list[str] = []
         seen: set[str] = set()
         for vid in video_ids:
@@ -309,17 +343,46 @@ class YoutubePlaylistMix:
             if len(v) == 11 and v not in seen:
                 seen.add(v)
                 unique.append(v)
-        if not unique or max_seeds <= 1:
-            return unique[:max(0, max_seeds)]
-        if len(unique) <= max_seeds:
+        if not unique or limit <= 1:
+            return unique[:max(0, limit)]
+        if len(unique) <= limit:
             return unique
+
+        if not artists:
+            return self._spread_picks(unique, limit)
+
+        # Look at twice the slots so artist filtering still fills every slot.
+        candidates = self._spread_picks(unique, min(len(unique), limit * 2))
+
+        artist_by_vid: dict[str, str] = {}
+        for vid, artist in zip(video_ids, artists):
+            v = (vid or "").strip()
+            a = (artist or "").strip().lower()
+            if v and a and v not in artist_by_vid:
+                artist_by_vid[v] = a
+
         picks: list[str] = []
-        last = len(unique) - 1
-        for i in range(max_seeds):
-            idx = round(i * last / (max_seeds - 1))
-            if unique[idx] not in picks:
-                picks.append(unique[idx])
-        return picks
+        used_artists: set[str] = set()
+        for vid in candidates:
+            artist = artist_by_vid.get(vid)
+            if artist and artist in used_artists:
+                continue
+            picks.append(vid)
+            if artist:
+                used_artists.add(artist)
+            if len(picks) >= limit:
+                return picks
+        for vid in candidates:
+            if len(picks) >= limit:
+                break
+            if vid not in picks:
+                picks.append(vid)
+        for vid in unique:
+            if len(picks) >= limit:
+                break
+            if vid not in picks:
+                picks.append(vid)
+        return picks[:limit]
 
     def mix_for_video(self, video_id: str, limit: int = 12) -> list[dict]:
         vid = (video_id or "").strip()
@@ -358,12 +421,26 @@ class YoutubePlaylistMix:
                 break
         return hits
 
-    def mix_for_seeds(self, video_ids: list[str], limit: int = 12) -> list[dict]:
-        seeds = self.pick_seed_ids(video_ids)
+    def _fetch_buckets(self, seeds: list[str], per_seed: int) -> list[list[dict]]:
+        """Fetch every seed radio in parallel so more seeds do not add latency."""
+        if len(seeds) <= 1:
+            return [self.mix_for_video(seed, per_seed) for seed in seeds]
+        workers = min(len(seeds), self.MAX_PARALLEL_SEEDS)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(self.mix_for_video, seed, per_seed) for seed in seeds]
+            return [future.result() for future in futures]
+
+    def mix_for_seeds(
+        self,
+        video_ids: list[str],
+        limit: int = 12,
+        artists: list[str] | None = None,
+    ) -> list[dict]:
+        seeds = self.pick_seed_ids(video_ids, artists=artists)
         if not seeds:
             return []
         per_seed = min(30, max(limit + 8, 16))
-        buckets = [self.mix_for_video(seed, per_seed) for seed in seeds]
+        buckets = self._fetch_buckets(seeds, per_seed)
         merged: list[dict] = []
         seen: set[str] = set(seeds)
         while len(merged) < limit and any(buckets):

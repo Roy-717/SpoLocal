@@ -68,41 +68,34 @@ describe('mix_rec_entries', () => {
 });
 
 describe('mix_order', () => {
-    it('spreads recommendations evenly between the tracks', () => {
-        mount_recs(['r1', 'r2', 'r3', 'r4']);
+    it('includes every track and every recommendation', () => {
+        mount_recs(['r1', 'r2', 'r3']);
         const { transport } = makeTransport();
-        expect(kinds(transport.mix_order())).toEqual([
-            'track:t1', 'track:t2', 'rec:r1', 'track:t3', 'track:t4', 'rec:r2',
+        transport.shuffle = { shuffleArrayInPlace: vi.fn() };
+        expect(kinds(transport.mix_order()).sort()).toEqual([
+            'rec:r1', 'rec:r2', 'rec:r3', 'track:t1', 'track:t2', 'track:t3', 'track:t4',
         ]);
     });
 
-    it('caps recommendations at half the track count', () => {
-        mount_recs(['r1', 'r2', 'r3', 'r4', 'r5']);
-        const { transport } = makeTransport({
-            playable: [{ id: 't1' }, { id: 't2' }, { id: 't3' }, { id: 't4' }, { id: 't5' }, { id: 't6' }],
-        });
-        expect(kinds(transport.mix_order())).toEqual([
-            'track:t1', 'track:t2', 'rec:r1', 'track:t3', 'track:t4', 'rec:r2',
-            'track:t5', 'track:t6', 'rec:r3',
-        ]);
-    });
-
-    it('uses the whole pool for a one track playlist', () => {
+    it('includes every track for a one track playlist', () => {
         mount_recs(['r1', 'r2', 'r3', 'r4']);
         const { transport } = makeTransport({ playable: [{ id: 't1' }] });
-        expect(kinds(transport.mix_order())).toEqual([
-            'track:t1', 'rec:r1', 'rec:r2', 'rec:r3', 'rec:r4',
+        transport.shuffle = { shuffleArrayInPlace: vi.fn() };
+        expect(kinds(transport.mix_order()).sort()).toEqual([
+            'rec:r1', 'rec:r2', 'rec:r3', 'rec:r4', 'track:t1',
         ]);
     });
 
     it('keeps the tracks when there are no recommendations', () => {
         const { transport } = makeTransport();
+        transport.shuffle = { shuffleArrayInPlace: vi.fn() };
         expect(kinds(transport.mix_order())).toEqual(['track:t1', 'track:t2', 'track:t3', 'track:t4']);
     });
 
     it('caches the order until the tracks or recommendations change', () => {
         mount_recs(['r1', 'r2']);
         const { transport, hub } = makeTransport();
+        transport.shuffle = { shuffleArrayInPlace: vi.fn() };
         const first = transport.mix_order();
         expect(transport.mix_order()).toBe(first);
         expect(hub.mixOrder).toBe(first);
@@ -111,14 +104,14 @@ describe('mix_order', () => {
         expect(transport.mix_order()).not.toBe(first);
     });
 
-    it('shuffles the whole order when shuffle is on', () => {
+    it('shuffles the whole order', () => {
         mount_recs(['r1', 'r2']);
-        const { transport } = makeTransport({ shuffleOn: true, shuffleMode: 'mix' });
+        const { transport } = makeTransport();
         transport.shuffle = { shuffleArrayInPlace: vi.fn((arr) => arr.reverse()) };
         const order = transport.mix_order();
         expect(transport.shuffle.shuffleArrayInPlace).toHaveBeenCalledWith(order);
         expect(kinds(order)).toEqual([
-            'rec:r2', 'track:t4', 'track:t3', 'rec:r1', 'track:t2', 'track:t1',
+            'rec:r2', 'rec:r1', 'track:t4', 'track:t3', 'track:t2', 'track:t1',
         ]);
     });
 });
@@ -135,7 +128,7 @@ describe('mix_current_index', () => {
         const { transport, hub } = makeTransport({ playbackContext: 'recs' });
         hub.searchStreamHit = { video_id: 'r1' };
         const order = transport.mix_order();
-        expect(transport.mix_current_index(order)).toBe(2);
+        expect(transport.mix_current_index(order)).toBe(4);
     });
 
     it('returns -1 for an unknown current item', () => {
@@ -183,7 +176,7 @@ describe('playAtDeltaMix', () => {
         mount_recs(['r1', 'r2']);
         const { transport } = makeTransport({ currentTrackId: 't2' });
         transport.playAtDeltaMix(1);
-        expect(transport.play_rec_or_mix_row).toHaveBeenCalled();
+        expect(transport.playTrackById).toHaveBeenCalledWith('t3');
     });
 
     it('wraps from the last entry to the first', () => {

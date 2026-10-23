@@ -763,28 +763,17 @@ export class PlaylistTransportController {
         return rows;
     }
 
-    /** Playlist tracks with recommendations spread evenly between them. */
+    /** Every playlist track plus every recommendation, in random order. */
     mix_order() {
         const hub = this.state.hub;
         const tracks = hub.playable || [];
         const recs = this.mix_rec_entries();
         const sig = tracks.map((t) => String(t.id)).join('|')
-            + '::' + recs.map((r) => r.video_id).join('|')
-            + '::' + (hub.shuffleOn ? 's' : 'n');
+            + '::' + recs.map((r) => r.video_id).join('|');
         if (hub.mixOrder && hub.mixOrderSig === sig) return hub.mixOrder;
 
-        const order = [];
-        // A short playlist would otherwise loop over a single recommendation.
-        const max_recs = tracks.length < 4 ? recs.length : Math.ceil(tracks.length / 2);
-        const used = recs.slice(0, max_recs);
-        const every = used.length ? Math.max(1, Math.round(tracks.length / used.length)) : 0;
-        let ri = 0;
-        for (let i = 0; i < tracks.length; i++) {
-            order.push({ kind: 'track', id: tracks[i].id });
-            if (every && (i + 1) % every === 0 && ri < used.length) order.push(used[ri++]);
-        }
-        while (ri < used.length) order.push(used[ri++]);
-        if (hub.shuffleOn && this.shuffle) this.shuffle.shuffleArrayInPlace(order);
+        const order = tracks.map((t) => ({ kind: 'track', id: t.id })).concat(recs);
+        if (this.shuffle) this.shuffle.shuffleArrayInPlace(order);
 
         hub.mixOrder = order;
         hub.mixOrderSig = sig;

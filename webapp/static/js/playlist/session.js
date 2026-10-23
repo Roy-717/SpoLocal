@@ -440,7 +440,7 @@ export class PlaylistSessionController {
         this.updateSidebarActive(hub.playlistId);
 
         this.transport.updatePlayingRow();
-        this.transport.setPlayUi(!!(hub.currentTrackId && !hub.audio.paused));
+        this.transport.setPlayUi(!hub.audio.paused);
         this.transport.likes.bind_track_row_like_buttons();
 
         if (hub.queueVisible) this.queue.render_queue_list();
@@ -484,7 +484,7 @@ export class PlaylistSessionController {
         this.updateSidebarActive(null);
         this.home.render();
         this.transport.updatePlayingRow();
-        this.transport.setPlayUi(!!(hub.currentTrackId && !hub.audio.paused));
+        this.transport.setPlayUi(!hub.audio.paused);
     }
 
     async navigateHome(pushHistory) {

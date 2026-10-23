@@ -53,6 +53,28 @@ class TestGuestAccess:
         assert client.get(f"/api/playlist/recommendations?playlist_id={pl.id}").status_code == 401
 
 
+class TestStreamLoudness:
+    def test_cached_gain_is_returned(self, client, main_module, monkeypatch) -> None:
+        monkeypatch.setattr(main_module.streaming, "stream_loudness_gain", lambda vid: -7.5)
+        resp = client.get("/api/stream/loudness-gain?vid=84ZtV9qMQe0")
+        assert resp.status_code == 200
+        assert resp.json() == {"loudness_gain_db": -7.5}
+
+    def test_missing_gain_starts_measurement(self, client, main_module, monkeypatch) -> None:
+        monkeypatch.setattr(main_module.streaming, "stream_loudness_gain", lambda vid: None)
+
+        async def fake_ensure(vid):
+            return None
+
+        monkeypatch.setattr(main_module.streaming, "ensure_stream_loudness_gain", fake_ensure)
+        resp = client.get("/api/stream/loudness-gain?vid=84ZtV9qMQe0")
+        assert resp.status_code == 200
+        assert resp.json() == {"loudness_gain_db": None, "pending": True}
+
+    def test_invalid_vid_is_400(self, client) -> None:
+        assert client.get("/api/stream/loudness-gain?vid=bad!id").status_code == 400
+
+
 class TestAuthRoutes:
     def test_register_sets_cookie(self, client) -> None:
         resp = client.post("/api/auth/register", json={"username": "alice", "password": "long enough"})

@@ -931,6 +931,23 @@ async def api_stream_chapters(vid: str):
     )
 
 
+@app.get("/api/stream/loudness-gain")
+async def api_stream_loudness_gain(vid: str):
+    """Return the cached stream loudness gain, or start measuring and return pending.
+
+    Measuring downloads the track once and runs ffmpeg ebur128, so never block
+    playback on it. The result is cached per video id on disk.
+    """
+    if not vid or not vid.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(status_code=400, detail="Invalid video id")
+    video_id = vid.strip()
+    cached = streaming.stream_loudness_gain(video_id)
+    if cached is not None:
+        return JSONResponse({"loudness_gain_db": cached})
+    asyncio.get_running_loop().create_task(streaming.ensure_stream_loudness_gain(video_id))
+    return JSONResponse({"loudness_gain_db": None, "pending": True})
+
+
 @app.get("/api/stream/lyrics")
 async def api_stream_lyrics(title: str = "", artist: str = ""):
     """Same LRCLIB lookup as after a download; nothing is written to disk."""

@@ -573,6 +573,7 @@ class AppShellController {
             hub.searchStreamHit = hit;
             hub.playbackContext = 'recs';
             hub._mediaDecodeRetries = 0;
+            if (typeof hub.applyStreamLoudness === 'function') hub.applyStreamLoudness(vid);
             hub.audio.pause();
             const stream_src = AppShellController.streamSrcForVideoId(vid);
             const after_meta = () => {

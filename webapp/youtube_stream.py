@@ -9,6 +9,7 @@ routes and delegates.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -511,6 +512,10 @@ class YouTubeStreamingService:
         self._video_cache: dict[str, tuple[YoutubeCdnAudio, float]] = {}
         self._video_inflight: dict[str, asyncio.Task[YoutubeCdnAudio]] = {}
         self._thumb_cache_dir = self._resolve_thumb_cache_dir(root)
+        self._loudness_cache: dict[str, float] = {}
+        self._loudness_inflight: dict[str, asyncio.Task[Optional[float]]] = {}
+        self._loudness_path = self._resolve_loudness_cache_path(root)
+        self._load_loudness_cache()
 
     @staticmethod
     def _resolve_thumb_cache_dir(root: Path) -> Path:
@@ -519,6 +524,66 @@ class YouTubeStreamingService:
         if playlists:
             return Path(playlists).parent / "thumb_cache"
         return root / "data" / "thumb_cache"
+
+    @staticmethod
+    def _resolve_loudness_cache_path(root: Path) -> Path:
+        playlists = (os.environ.get("SPLOCAL_PLAYLISTS_PATH") or "").strip()
+        if playlists:
+            return Path(playlists).parent / "stream_loudness.json"
+        return root / "data" / "stream_loudness.json"
+
+    def _load_loudness_cache(self) -> None:
+        try:
+            raw = json.loads(self._loudness_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(raw, dict):
+            return
+        for vid, gain in raw.items():
+            try:
+                self._loudness_cache[str(vid)] = float(gain)
+            except (TypeError, ValueError):
+                continue
+
+    def _save_loudness_cache(self) -> None:
+        try:
+            self._loudness_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._loudness_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self._loudness_cache, indent=2), encoding="utf-8")
+            os.replace(tmp, self._loudness_path)
+        except Exception as exc:
+            _log.debug("stream loudness cache save failed: %s", exc)
+
+    def stream_loudness_gain(self, video_id: str) -> Optional[float]:
+        return self._loudness_cache.get(str(video_id or "").strip())
+
+    async def ensure_stream_loudness_gain(self, video_id: str) -> Optional[float]:
+        vid = str(video_id or "").strip()
+        if not vid:
+            return None
+        cached = self._loudness_cache.get(vid)
+        if cached is not None:
+            return cached
+        pending = self._loudness_inflight.get(vid)
+        if pending is None:
+            pending = asyncio.create_task(self._measure_stream_loudness(vid))
+            self._loudness_inflight[vid] = pending
+        try:
+            return await pending
+        finally:
+            if self._loudness_inflight.get(vid) is pending:
+                self._loudness_inflight.pop(vid, None)
+
+    async def _measure_stream_loudness(self, vid: str) -> Optional[float]:
+        from loudness_analysis import analyze_stream_loudness_gain_db
+
+        gain = await asyncio.get_running_loop().run_in_executor(
+            None, analyze_stream_loudness_gain_db, vid, self.root
+        )
+        if gain is not None:
+            self._loudness_cache[vid] = gain
+            self._save_loudness_cache()
+        return gain
 
     # ---- stream source helpers --------------------------------------------
 

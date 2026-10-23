@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../../static/js/audio_quality_prefs.js';
 import { PlaybackQualityController } from '../../static/js/player/playback_quality_controller.js';
@@ -190,6 +190,85 @@ describe('onPlaybackQualityChanged', () => {
         const fetchPayload = vi.spyOn(controller, 'fetchTrackPayload');
         await controller.onPlaybackQualityChanged(false);
         expect(fetchPayload).not.toHaveBeenCalled();
+    });
+});
+
+describe('stream loudness', () => {
+    function makeStreamController(overrides = {}) {
+        const norm = { wire: vi.fn(), set_track_gain_db: vi.fn() };
+        const { controller, hub, transport } = makeController({
+            hub: { audioNormalization: norm, ...overrides.hub },
+            transport: {
+                stream_vid_from_src: vi.fn((src) => {
+                    try {
+                        const u = new URL(String(src || ''), 'https://localhost/');
+                        return u.pathname.startsWith('/api/stream') ? (u.searchParams.get('vid') || '') : '';
+                    } catch (e) {
+                        return '';
+                    }
+                }),
+                ...overrides.transport,
+            },
+        });
+        return { controller, hub, transport, norm };
+    }
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it('prefers the active search hit video id', () => {
+        const { controller, hub } = makeStreamController();
+        hub.searchStreamActive = true;
+        hub.searchStreamHit = { video_id: 'abc' };
+        expect(controller._current_stream_vid()).toBe('abc');
+    });
+
+    it('reads the video id from a stream src', () => {
+        const { controller, hub } = makeStreamController();
+        hub.audio.src = '/api/stream?vid=xyz';
+        expect(controller._current_stream_vid()).toBe('xyz');
+    });
+
+    it('applies a cached stream gain', async () => {
+        const { controller, hub, norm } = makeStreamController();
+        hub.searchStreamActive = true;
+        hub.searchStreamHit = { video_id: 'abc' };
+        vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ loudness_gain_db: -7.5 }),
+        })));
+
+        await controller.apply_stream_loudness('abc');
+
+        expect(norm.wire).toHaveBeenCalled();
+        expect(norm.set_track_gain_db).toHaveBeenCalledWith(-7.5);
+    });
+
+    it('does not apply a gain for a different stream', async () => {
+        const { controller, hub, norm } = makeStreamController();
+        hub.searchStreamActive = true;
+        hub.searchStreamHit = { video_id: 'other' };
+        vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ loudness_gain_db: -7.5 }),
+        })));
+
+        await controller.apply_stream_loudness('abc');
+
+        expect(norm.set_track_gain_db).not.toHaveBeenCalled();
+    });
+
+    it('routes apply_track_loudness to the stream path', async () => {
+        const { controller, hub, norm } = makeStreamController();
+        hub.searchStreamActive = true;
+        hub.searchStreamHit = { video_id: 'abc' };
+        const apply = vi.spyOn(controller, 'apply_stream_loudness').mockResolvedValue();
+
+        await controller.apply_track_loudness({ id: 't1' }, 'p1');
+
+        expect(apply).toHaveBeenCalledWith('abc');
+        expect(norm.set_track_gain_db).not.toHaveBeenCalled();
     });
 });
 

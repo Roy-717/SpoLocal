@@ -88,6 +88,19 @@ def ffprobe_executable(root: Path) -> str:
     return found or "ffprobe"
 
 
+def _integrated_lufs(text: str) -> Optional[float]:
+    """Return the last integrated loudness value ffmpeg printed, if any."""
+    value: Optional[float] = None
+    for line in text.splitlines():
+        if "I:" not in line or "LUFS" not in line:
+            continue
+        try:
+            value = float(line.split("I:", 1)[1].split("LUFS", 1)[0].strip())
+        except ValueError:
+            continue
+    return value
+
+
 def analyze_loudness_gain_db(
     path: Path,
     root: Path,
@@ -127,3 +140,62 @@ def analyze_loudness_gain_db(
     except Exception as exc:
         _log.warning("loudness analysis failed for %s: %s", path, exc)
         return None
+
+
+def analyze_stream_loudness_gain_db(
+    video_id: str,
+    root: Path,
+    target_lufs: float = TARGET_LUFS,
+) -> Optional[float]:
+    """Measure a YouTube stream's integrated loudness without keeping the file.
+
+    yt-dlp writes the same Opus stream the player receives into ffmpeg, so the
+    gain matches what the browser decodes. The whole track is read once; the
+    caller caches the result per video id.
+    """
+    from audio_quality import ytdlp_stream_cmd
+
+    ffmpeg_cmd = [
+        ffmpeg_executable(root),
+        "-hide_banner",
+        "-nostats",
+        "-loglevel",
+        "info",
+        "-i",
+        "pipe:0",
+        "-af",
+        "ebur128=peak=true",
+        "-f",
+        "null",
+        "-",
+    ]
+    dl = None
+    try:
+        dl = subprocess.Popen(
+            ytdlp_stream_cmd(video_id),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        proc = subprocess.run(
+            ffmpeg_cmd,
+            stdin=dl.stdout,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+        integrated = _integrated_lufs((proc.stderr or "") + (proc.stdout or ""))
+        if integrated is None:
+            return None
+        return clamp_gain_db(target_lufs - integrated)
+    except Exception as exc:
+        _log.warning("stream loudness analysis failed for %s: %s", video_id, exc)
+        return None
+    finally:
+        if dl is not None:
+            if dl.stdout is not None:
+                dl.stdout.close()
+            try:
+                dl.wait(timeout=10)
+            except Exception:
+                dl.kill()

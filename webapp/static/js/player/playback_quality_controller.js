@@ -268,10 +268,75 @@ export class PlaybackQualityController {
         return true;
     }
 
+    _current_stream_vid() {
+        const hub = this.state.hub;
+        if (!hub) return '';
+        if (hub.searchStreamActive && hub.searchStreamHit) {
+            const hit_vid = String(hub.searchStreamHit.video_id || '').trim();
+            if (hit_vid) return hit_vid;
+        }
+        if (this.transport && typeof this.transport.stream_vid_from_src === 'function') {
+            return this.transport.stream_vid_from_src(hub.audio && (hub.audio.currentSrc || hub.audio.src));
+        }
+        return '';
+    }
+
+    async apply_stream_loudness(vid) {
+        const hub = this.state.hub;
+        const norm = hub.audioNormalization;
+        const video_id = String(vid || '').trim();
+        if (!norm || !video_id) return;
+        norm.wire();
+        try {
+            const r = await fetch(
+                '/api/stream/loudness-gain?vid=' + encodeURIComponent(video_id),
+                { credentials: 'same-origin' },
+            );
+            if (!r.ok) return;
+            const j = await r.json();
+            if (j.loudness_gain_db != null) {
+                if (this._current_stream_vid() !== video_id) return;
+                norm.set_track_gain_db(j.loudness_gain_db);
+            } else if (j.pending) {
+                this.poll_stream_loudness(video_id, norm);
+            }
+        } catch (e) {}
+    }
+
+    async poll_stream_loudness(video_id, norm) {
+        // Measuring downloads the track once; pick up the cached gain when ready.
+        let attempts = 0;
+        while (attempts < 10 && this._current_stream_vid() === video_id) {
+            await new Promise((res) => setTimeout(res, 2000));
+            try {
+                const r = await fetch(
+                    '/api/stream/loudness-gain?vid=' + encodeURIComponent(video_id),
+                    { credentials: 'same-origin' },
+                );
+                if (!r.ok) return;
+                const j = await r.json();
+                if (j.loudness_gain_db != null) {
+                    if (this._current_stream_vid() === video_id) {
+                        norm.set_track_gain_db(j.loudness_gain_db);
+                    }
+                    return;
+                }
+            } catch (e) {
+                return;
+            }
+            attempts += 1;
+        }
+    }
+
     async apply_track_loudness(track, playlist_id) {
         const hub = this.state.hub;
         const norm = hub.audioNormalization;
         if (!norm) return;
+        const stream_vid = this._current_stream_vid();
+        if (stream_vid) {
+            await this.apply_stream_loudness(stream_vid);
+            return;
+        }
         const src = hub.audio ? String(hub.audio.currentSrc || hub.audio.src || '') : '';
         const prefs = window.SpolocalQualityPrefs;
         const is_local = !!(prefs && prefs.normalizeMediaPath(src));

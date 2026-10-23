@@ -236,6 +236,34 @@ describe('playAtDeltaMix', () => {
         expect(new Set(after).size).toBe(after.length);
     });
 
+    it('keeps the mix when a download re-render wipes the recs table', () => {
+        mount_recs(['r1', 'r2', 'r3']);
+        const { transport, hub } = makeTransport({ playbackContext: 'recs', currentTrackId: 't1' });
+        hub.searchStreamHit = { video_id: 'r2' };
+        transport.shuffle = { shuffleArrayInPlace: vi.fn() };
+        transport.mix_order();
+        const preview = vi.fn();
+        window.playPreview = preview;
+        // A download completion rebuilds the playlist view and clears the recs grid.
+        mount_recs([]);
+        transport.playAtDeltaMix(1);
+        expect(preview).toHaveBeenCalledWith(expect.objectContaining({ video_id: 'r3' }), null);
+        expect(transport.playTrackById).not.toHaveBeenCalled();
+    });
+
+    it('keeps the playing recommendation after it leaves the recs list', () => {
+        mount_recs(['r1', 'r2', 'r3']);
+        const { transport, hub } = makeTransport({ playbackContext: 'recs', currentTrackId: 't1' });
+        hub.searchStreamHit = { video_id: 'r2' };
+        transport.shuffle = { shuffleArrayInPlace: vi.fn() };
+        transport.mix_order();
+        // The downloaded rec is now a playlist track, so the fresh list drops it.
+        mount_recs(['r1', 'r3']);
+        const order = transport.mix_order();
+        expect(kinds(order)).toContain('rec:r2');
+        expect(transport.mix_current_index(order)).toBeGreaterThanOrEqual(0);
+    });
+
     it('asks for recommendations when the mix has none', () => {
         const { transport } = makeTransport();
         transport.ensure_mix_recommendations = vi.fn();

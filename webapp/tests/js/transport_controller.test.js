@@ -614,4 +614,13 @@ describe('init', () => {
         playing_call[1](event);
         expect(transport.record_playback_start).toHaveBeenCalledWith(event);
     });
+
+    it('snapshots the recs and re-marks the playing row when they render', () => {
+        const { transport } = make_init_transport();
+        transport.mix_rec_entries = vi.fn();
+        transport.init();
+        window.dispatchEvent(new CustomEvent('spolocal:mix-recommendations-rendered'));
+        expect(transport.mix_rec_entries).toHaveBeenCalled();
+        expect(transport.updatePlayingRow).toHaveBeenCalled();
+    });
 });

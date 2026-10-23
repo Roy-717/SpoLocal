@@ -170,6 +170,13 @@ export class PlaylistTransportController {
         hub.audio.addEventListener('stalled', () => this.scheduleStallRecoveryIfStillHung());
         hub.audio.addEventListener('waiting', () => this.scheduleStallRecoveryIfStillHung());
 
+        // A download re-render rebuilds the recs table; snapshot the fresh list
+        // and keep the playing rec marked.
+        window.addEventListener('spolocal:mix-recommendations-rendered', () => {
+            this.mix_rec_entries();
+            this.updatePlayingRow();
+        });
+
         document.addEventListener('visibilitychange', () => this.handleVisibilityForBackgroundPlayback());
         window.addEventListener('pageshow', (ev) => {
             if (!ev.persisted) return;
@@ -752,8 +759,8 @@ export class PlaylistTransportController {
         this.playTrackById(hub.playable[target].id);
     }
 
-    /** Recommendations currently rendered for the viewed playlist. */
-    mix_rec_entries() {
+    /** Recommendation rows currently rendered for the viewed playlist. */
+    read_rec_rows() {
         const rows = [];
         const table = document.getElementById('playlist-recommendations-table');
         if (!table) return rows;
@@ -768,6 +775,35 @@ export class PlaylistTransportController {
             });
         });
         return rows;
+    }
+
+    /**
+     * Recommendations for the mix. A download re-render wipes the table, so fall
+     * back to the last list seen for this playlist and keep the playing rec in
+     * the pool even when a fresh list no longer offers it.
+     */
+    mix_rec_entries() {
+        const hub = this.state.hub;
+        const pid = String(hub.playlistId || '');
+        const live = this.read_rec_rows();
+        const snapshot = (hub.mixRecsPid === pid && Array.isArray(hub.mixRecs)) ? hub.mixRecs : [];
+        const base = live.length ? live : snapshot;
+        const merged = this.with_playing_rec(base, snapshot);
+        if (live.length) {
+            hub.mixRecs = merged;
+            hub.mixRecsPid = pid;
+        }
+        return merged;
+    }
+
+    /** Append the playing recommendation when the list no longer contains it. */
+    with_playing_rec(entries, snapshot) {
+        const hub = this.state.hub;
+        if (hub.playbackContext !== 'recs') return entries;
+        const vid = this.current_stream_vid();
+        if (!vid || entries.some((e) => e.video_id === vid)) return entries;
+        const playing = snapshot.find((e) => e.video_id === vid);
+        return playing ? entries.concat([playing]) : entries;
     }
 
     /** Every playlist track plus every recommendation, with a cache signature. */

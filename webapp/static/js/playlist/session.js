@@ -1,6 +1,6 @@
 import { PlaylistTransportController } from '../player/transport_controller.js?v=108';
 import { PlaylistLikeController } from '../player/like_controller.js?v=1';
-import { PlaylistShuffleController } from '../player/shuffle_controller.js?v=4';
+import { PlaylistShuffleController } from '../player/shuffle_controller.js?v=5';
 import { PlaylistMediaSessionController } from '../player/media_session_controller.js?v=1';
 import { PlaybackQualityController } from '../player/playback_quality_controller.js?v=3';
 import { PlaylistQueueController } from '../player/queue_controller.js?v=90';

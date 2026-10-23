@@ -338,12 +338,15 @@ describe('updateShuffleRepeatUi', () => {
 
     it('shows the mix sparkle only in mix mode', () => {
         const shuffleSparkle = document.createElement('g');
-        const { ctrl, hub } = make_controller({ shuffleMode: 'mix', shuffleSparkle });
+        const btnShuffle = document.createElement('button');
+        const { ctrl, hub } = make_controller({ shuffleMode: 'mix', shuffleSparkle, btnShuffle });
         ctrl.updateShuffleRepeatUi();
         expect(shuffleSparkle.classList.contains('hidden')).toBe(false);
+        expect(btnShuffle.classList.contains('is-mix')).toBe(true);
         hub.shuffleMode = 'shuffle';
         ctrl.updateShuffleRepeatUi();
         expect(shuffleSparkle.classList.contains('hidden')).toBe(true);
+        expect(btnShuffle.classList.contains('is-mix')).toBe(false);
     });
 
     it('shows the repeat-one badge only in repeat one mode', () => {

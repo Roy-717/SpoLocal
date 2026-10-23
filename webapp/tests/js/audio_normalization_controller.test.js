@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../../static/js/audio_normalization_prefs.js';
 import { AudioNormalizationController } from '../../static/js/player/audio_normalization_controller.js';
@@ -11,8 +11,58 @@ function fakeAudio() {
     };
 }
 
+function fakeAudioWithEvents() {
+    const listeners = {};
+    return {
+        paused: true,
+        volume: 1,
+        addEventListener: (name, fn) => {
+            (listeners[name] = listeners[name] || []).push(fn);
+        },
+        emit: (name) => (listeners[name] || []).forEach((fn) => fn()),
+    };
+}
+
+class FakeAudioContext {
+    constructor() {
+        this.state = 'suspended';
+        this.destination = {};
+        this.source_el = null;
+    }
+    createMediaElementSource(el) {
+        this.source_el = el;
+        return { connect: vi.fn() };
+    }
+    createGain() {
+        return { gain: { value: 1 }, connect: vi.fn() };
+    }
+    createAnalyser() {
+        return {
+            fftSize: 0,
+            smoothingTimeConstant: 0,
+            frequencyBinCount: 8,
+            connect: vi.fn(),
+            getByteFrequencyData: vi.fn(),
+        };
+    }
+    resume() {
+        this.state = 'running';
+        return Promise.resolve();
+    }
+}
+
+class StuckAudioContext extends FakeAudioContext {
+    resume() {
+        return new Promise(() => {});
+    }
+}
+
 beforeEach(() => {
     localStorage.clear();
+});
+
+afterEach(() => {
+    delete globalThis.AudioContext;
 });
 
 describe('volume and gain', () => {
@@ -48,6 +98,62 @@ describe('volume and gain', () => {
         expect(ctrl.enabled).toBe(false);
         ctrl.set_enabled(true);
         expect(ctrl.enabled).toBe(true);
+    });
+});
+
+describe('suspended audio context', () => {
+    it('keeps native audio until the context is running', () => {
+        globalThis.AudioContext = StuckAudioContext;
+        const audio = fakeAudio();
+        audio.paused = false;
+        const ctrl = new AudioNormalizationController(audio);
+        ctrl.wire();
+        expect(ctrl.ctx).toBeTruthy();
+        expect(ctrl.ctx.state).toBe('suspended');
+        expect(ctrl._wired).toBe(false);
+        expect(ctrl.gain_node).toBeNull();
+        expect(audio.volume).toBe(1);
+    });
+
+    it('connects the graph once resume succeeds', async () => {
+        globalThis.AudioContext = FakeAudioContext;
+        const audio = fakeAudio();
+        audio.paused = false;
+        const ctrl = new AudioNormalizationController(audio);
+        ctrl.wire();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(ctrl.ctx.state).toBe('running');
+        expect(ctrl._wired).toBe(true);
+        expect(ctrl.gain_node).toBeTruthy();
+    });
+
+    it('resumes a suspended context on the next play event', async () => {
+        globalThis.AudioContext = FakeAudioContext;
+        const audio = fakeAudioWithEvents();
+        const ctrl = new AudioNormalizationController(audio);
+        ctrl.wire();
+        expect(ctrl._wired).toBe(false);
+        audio.paused = false;
+        audio.emit('play');
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(ctrl._wired).toBe(true);
+    });
+
+    it('resumes a wired context when playback restarts', async () => {
+        globalThis.AudioContext = FakeAudioContext;
+        const audio = fakeAudioWithEvents();
+        audio.paused = false;
+        const ctrl = new AudioNormalizationController(audio);
+        ctrl.wire();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(ctrl._wired).toBe(true);
+        ctrl.ctx.state = 'suspended';
+        const resume = vi.spyOn(ctrl.ctx, 'resume');
+        audio.emit('play');
+        expect(resume).toHaveBeenCalled();
     });
 });
 

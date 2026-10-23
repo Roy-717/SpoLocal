@@ -13,6 +13,8 @@ export class AudioNormalizationController {
         this.track_gain_db = 0;
         this.enabled = true;
         this._wired = false;
+        this._play_bound = false;
+        this._resuming = false;
     }
 
     ensure_wired() {
@@ -22,10 +24,68 @@ export class AudioNormalizationController {
         }
     }
 
-    _connect_graph() {
-        if (this._wired) return;
+    _ensure_ctx() {
+        if (this.ctx) return true;
         try {
             this.ctx = new AudioContext();
+            return true;
+        } catch (e) {
+            this.ctx = null;
+            return false;
+        }
+    }
+
+    /**
+     * A context suspended by tab sleep or OS suspend stays silent and freezes
+     * currentTime. Resume it, and connect the graph once it is actually running.
+     */
+    _resume() {
+        const ctx = this.ctx;
+        if (!ctx || ctx.state === 'running' || this._resuming) return;
+        this._resuming = true;
+        try {
+            const p = ctx.resume();
+            if (p && typeof p.then === 'function') {
+                p.then(() => {
+                    this._resuming = false;
+                    if (!this._wired && this.ctx && this.ctx.state === 'running') {
+                        this._connect_graph();
+                    }
+                }).catch(() => { this._resuming = false; });
+            } else {
+                this._resuming = false;
+            }
+        } catch (e) {
+            this._resuming = false;
+        }
+    }
+
+    _bind_resume() {
+        if (this._play_bound || !this.audio_el) return;
+        this._play_bound = true;
+        this.audio_el.addEventListener('play', () => this._connect_graph());
+        if (typeof document === 'undefined') return;
+        const on_gesture = () => this._resume();
+        document.addEventListener('pointerdown', on_gesture, true);
+        document.addEventListener('keydown', on_gesture, true);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') this._resume();
+        });
+    }
+
+    _connect_graph() {
+        if (this._wired) {
+            this._resume();
+            return;
+        }
+        if (!this._ensure_ctx()) return;
+        // Never route the element through a suspended context: that freezes
+        // playback at 0:00. Keep native audio until the context is running.
+        if (this.ctx.state !== 'running') {
+            this._resume();
+            return;
+        }
+        try {
             const src = this.ctx.createMediaElementSource(this.audio_el);
             this.gain_node = this.ctx.createGain();
             src.connect(this.gain_node);
@@ -37,9 +97,6 @@ export class AudioNormalizationController {
             this._freq = new Uint8Array(this.analyser.frequencyBinCount);
             this.audio_el.volume = 1;
             this._wired = true;
-            if (this.ctx.state === 'suspended') {
-                this.ctx.resume().catch(() => {});
-            }
         } catch (e) {
             this._wired = false;
         }
@@ -47,10 +104,16 @@ export class AudioNormalizationController {
     }
 
     wire() {
-        if (this._wired) return;
+        if (this._wired) {
+            this._resume();
+            return;
+        }
         const prefs = window.SpolocalNormalizationPrefs;
         if (prefs) this.enabled = prefs.enabled();
-        this.audio_el.addEventListener('play', () => this._connect_graph(), { once: true });
+        // Create the context inside the click gesture when possible so it starts
+        // running; the source is connected on the first play event.
+        this._ensure_ctx();
+        this._bind_resume();
         if (!this.audio_el.paused) this._connect_graph();
         this._sync_gain();
     }

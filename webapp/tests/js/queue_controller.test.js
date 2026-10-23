@@ -712,6 +712,21 @@ describe('render_queue_list in mix mode', () => {
         expect(rows[3].querySelector('.queue-row-title').textContent).toBe('R2');
     });
 
+    it('asks the transport to load recommendations when the mix has none', () => {
+        const { ctrl, transport } = make_mix_controller({ currentTrackId: 'a' });
+        transport.mix_order = vi.fn(() => [{ kind: 'track', id: 'a' }, { kind: 'track', id: 'b' }]);
+        transport.ensure_mix_recommendations = vi.fn();
+        ctrl.render_queue_list();
+        expect(transport.ensure_mix_recommendations).toHaveBeenCalled();
+    });
+
+    it('does not reload recommendations when the mix already has them', () => {
+        const { ctrl, transport } = make_mix_controller({ currentTrackId: 'a' });
+        transport.ensure_mix_recommendations = vi.fn();
+        ctrl.render_queue_list();
+        expect(transport.ensure_mix_recommendations).not.toHaveBeenCalled();
+    });
+
     it('plays a recommendation when its row is clicked', () => {
         const { ctrl, hub, transport } = make_mix_controller({ currentTrackId: 'a' });
         ctrl.render_queue_list();

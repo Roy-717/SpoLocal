@@ -437,7 +437,15 @@ export class PlaylistQueueController {
         const playingTracks = (hub.playingTracks && hub.playingTracks.length) ? hub.playingTracks : hub.tracks;
         const currentSourcePid = String(hub.playingPlaylistId || hub.playlistId || '');
 
-        const mixRec = this.is_mix_queue() ? this.current_mix_rec_entry() : null;
+        const mixMode = this.is_mix_queue();
+        // Mix restored from storage loads before the recommendations section, so
+        // the boot-time fetch is a no-op. Render is the reliable trigger.
+        if (mixMode
+            && typeof this.transport.ensure_mix_recommendations === 'function'
+            && !this.transport.mix_order().some(function (e) { return e.kind === 'rec'; })) {
+            this.transport.ensure_mix_recommendations();
+        }
+        const mixRec = mixMode ? this.current_mix_rec_entry() : null;
 
         if (mixRec) {
             any = true;

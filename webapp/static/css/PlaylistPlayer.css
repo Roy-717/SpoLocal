@@ -816,15 +816,10 @@ body { background: #121212; color: #fff; }
 #player-cover-fallback { display: none; }
 .player-control-btn--active { color: #1DB954 !important; }
 .player-control-btn--muted { color: #727272; }
-#player-repeat-wrap, #player-shuffle-wrap { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+#player-repeat-wrap { position: relative; display: inline-flex; align-items: center; justify-content: center; }
 #player-repeat-one-badge {
     position: absolute; bottom: 2px; right: 2px; font-size: 8px; font-weight: 800;
     line-height: 1; color: #121212; background: #1DB954; border-radius: 2px; padding: 0 2px;
-    pointer-events: none;
-}
-#player-shuffle-mix-badge {
-    position: absolute; top: 3px; right: 6px; font-size: 12px; font-weight: 800;
-    line-height: 1; color: #1DB954; text-shadow: 0 0 3px rgba(29, 185, 84, 0.55);
     pointer-events: none;
 }
 /* Playlist 2×2 art: fill each cell, crop to square (overrides img { height: auto } preflight). */

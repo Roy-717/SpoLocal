@@ -137,8 +137,8 @@ export class PlaylistShuffleController {
             else if (mode === 'mix') title = 'Mix: playlist + recommendations';
             hub.btnShuffle.setAttribute('title', title);
         }
-        if (hub.shuffleMixBadge) {
-            hub.shuffleMixBadge.classList.toggle('hidden', mode !== 'mix');
+        if (hub.shuffleSparkle) {
+            hub.shuffleSparkle.classList.toggle('hidden', mode !== 'mix');
         }
         if (hub.btnRepeat) {
             const active = hub.repeatMode !== 'off';

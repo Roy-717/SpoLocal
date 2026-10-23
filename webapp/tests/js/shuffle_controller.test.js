@@ -16,7 +16,7 @@ function make_hub(overrides = {}) {
         btnShuffle: null,
         btnRepeat: null,
         repeatOneBadge: null,
-        shuffleMixBadge: null,
+        shuffleSparkle: null,
         queueVisible: false,
         ...overrides,
     };
@@ -336,14 +336,14 @@ describe('updateShuffleRepeatUi', () => {
         expect(btnRepeat.getAttribute('aria-pressed')).toBe('false');
     });
 
-    it('shows the mix badge only in mix mode', () => {
-        const shuffleMixBadge = document.createElement('span');
-        const { ctrl, hub } = make_controller({ shuffleMode: 'mix', shuffleMixBadge });
+    it('shows the mix sparkle only in mix mode', () => {
+        const shuffleSparkle = document.createElement('g');
+        const { ctrl, hub } = make_controller({ shuffleMode: 'mix', shuffleSparkle });
         ctrl.updateShuffleRepeatUi();
-        expect(shuffleMixBadge.classList.contains('hidden')).toBe(false);
+        expect(shuffleSparkle.classList.contains('hidden')).toBe(false);
         hub.shuffleMode = 'shuffle';
         ctrl.updateShuffleRepeatUi();
-        expect(shuffleMixBadge.classList.contains('hidden')).toBe(true);
+        expect(shuffleSparkle.classList.contains('hidden')).toBe(true);
     });
 
     it('shows the repeat-one badge only in repeat one mode', () => {

@@ -191,6 +191,24 @@ describe('playAtDeltaMix', () => {
         expect(transport.playTrackById).toHaveBeenCalledWith('t4');
     });
 
+    it('reshuffles a fresh cycle instead of repeating the same order', () => {
+        const { transport } = makeTransport({ currentTrackId: 't4' });
+        transport.mix_order();
+        transport.shuffle = { shuffleArrayInPlace: vi.fn((arr) => arr.reverse()) };
+        transport.playAtDeltaMix(1);
+        expect(kinds(transport.mix_order())).toEqual(['track:t4', 'track:t3', 'track:t2', 'track:t1']);
+        expect(transport.playTrackById).toHaveBeenCalledWith('t3');
+    });
+
+    it('keeps the current entry first when the cycle restarts', () => {
+        const { transport } = makeTransport({ currentTrackId: 't2' });
+        transport.shuffle = { shuffleArrayInPlace: vi.fn() };
+        const current = transport.mix_order().find((e) => e.id === 't2');
+        const order = transport.reshuffle_mix_order(current);
+        expect(order[0]).toBe(current);
+        expect(order.length).toBe(4);
+    });
+
     it('asks for recommendations when the mix has none', () => {
         const { transport } = makeTransport();
         transport.ensure_mix_recommendations = vi.fn();

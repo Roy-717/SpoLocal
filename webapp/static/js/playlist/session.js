@@ -1,9 +1,9 @@
-import { PlaylistTransportController } from '../player/transport_controller.js?v=111';
+import { PlaylistTransportController } from '../player/transport_controller.js?v=112';
 import { PlaylistLikeController } from '../player/like_controller.js?v=1';
 import { PlaylistShuffleController } from '../player/shuffle_controller.js?v=5';
 import { PlaylistMediaSessionController } from '../player/media_session_controller.js?v=1';
 import { PlaybackQualityController } from '../player/playback_quality_controller.js?v=3';
-import { PlaylistQueueController } from '../player/queue_controller.js?v=92';
+import { PlaylistQueueController } from '../player/queue_controller.js?v=93';
 import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=91';
 import { PlaylistEditModalController } from '../ui/edit_modal_controller.js';
 import { PlaylistContextMenuController } from '../ui/context_menu_controller.js?v=93';

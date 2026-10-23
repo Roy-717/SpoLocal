@@ -832,9 +832,9 @@ export class PlaylistTransportController {
         return false;
     }
 
-    /** Advance through the playlist + recommendations mix, wrapping at the end. */
+    /** Advance through the playlist + recommendations mix, reshuffling each cycle. */
     playAtDeltaMix(delta) {
-        const order = this.mix_order();
+        let order = this.mix_order();
         if (!order.length) {
             this.stop_playback();
             return;
@@ -842,8 +842,24 @@ export class PlaylistTransportController {
         if (!order.some((e) => e.kind === 'rec')) this.ensure_mix_recommendations();
         let idx = this.mix_current_index(order);
         if (idx < 0) idx = delta > 0 ? -1 : 0;
-        const target = order[this.wrap_index(idx + delta, order.length)];
+        let next_idx = idx + delta;
+        if (next_idx < 0 || next_idx >= order.length) {
+            order = this.reshuffle_mix_order(idx >= 0 ? order[idx] : null);
+            idx = idx >= 0 ? 0 : -1;
+            next_idx = idx + delta;
+        }
+        const target = order[this.wrap_index(next_idx, order.length)];
         if (!this.play_mix_entry(target)) this.stop_playback();
+    }
+
+    /** Start a fresh cycle with the current entry first, so the mix never repeats. */
+    reshuffle_mix_order(current_entry) {
+        const hub = this.state.hub;
+        const rest = this.mix_order().filter((e) => e !== current_entry);
+        if (this.shuffle) this.shuffle.shuffleArrayInPlace(rest);
+        const order = current_entry ? [current_entry].concat(rest) : rest;
+        hub.mixOrder = order;
+        return order;
     }
 
     /** Load the playlist recommendations once so mix mode has something to add. */

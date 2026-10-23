@@ -712,6 +712,15 @@ describe('render_queue_list in mix mode', () => {
         expect(rows[3].querySelector('.queue-row-title').textContent).toBe('R2');
     });
 
+    it('does not wrap the queue back to the song that just ended', () => {
+        const { ctrl, hub } = make_mix_controller({ currentTrackId: 'b', repeatMode: 'all' });
+        ctrl.render_queue_list();
+        const rows = hub.queueList.querySelectorAll('.queue-row');
+        expect(rows.length).toBe(2);
+        expect(rows[0].querySelector('.queue-row-title').textContent).toBe('B');
+        expect(rows[1].querySelector('.queue-row-title').textContent).toBe('R2');
+    });
+
     it('asks the transport to load recommendations when the mix has none', () => {
         const { ctrl, transport } = make_mix_controller({ currentTrackId: 'a' });
         transport.mix_order = vi.fn(() => [{ kind: 'track', id: 'a' }, { kind: 'track', id: 'b' }]);

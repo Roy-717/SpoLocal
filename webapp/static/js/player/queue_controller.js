@@ -71,7 +71,6 @@ export class PlaylistQueueController {
 
     /** Entries still to come: the mix order in mix mode, tracks otherwise. */
     queue_tail_entries() {
-        const hub = this.state.hub;
         if (!this.is_mix_queue()) {
             return this.get_queue_track_ids().map(function (id) { return { kind: 'track', id: id }; });
         }
@@ -79,8 +78,9 @@ export class PlaylistQueueController {
         if (!order.length) return [];
         const idx = this.transport.mix_current_index(order);
         if (idx < 0) return order.slice();
-        if (hub.repeatMode === 'off') return order.slice(idx);
-        return order.slice(idx).concat(order.slice(0, idx));
+        // One cycle only: the mix reshuffles when it wraps, so the song that
+        // just ended must not reappear at the bottom of the queue.
+        return order.slice(idx);
     }
 
     _wireQueueToggleButtons() {

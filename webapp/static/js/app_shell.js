@@ -1080,6 +1080,7 @@ class AppShellController {
         table.appendChild(tbody);
         container.appendChild(table);
         this.sync_search_card_play_buttons();
+        window.dispatchEvent(new CustomEvent('spolocal:mix-recommendations-rendered'));
     }
 
     // ---- recommendations (IntersectionObserver-lazy) ------------------------

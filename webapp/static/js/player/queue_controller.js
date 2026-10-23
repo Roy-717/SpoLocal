@@ -27,6 +27,60 @@ export class PlaylistQueueController {
         this._wireQueueToggleButtons();
         this._wireQueueCloseButton();
         this._listenForceCloseQueue();
+        this._listenRecommendationsRendered();
+    }
+
+    /** Mix mode needs the recommendation rows, which load after the first render. */
+    _listenRecommendationsRendered() {
+        if (this._recsRenderedBound) return;
+        this._recsRenderedBound = true;
+        window.addEventListener('spolocal:mix-recommendations-rendered', () => {
+            const hub = this.state.hub;
+            if (!hub || !hub.queueVisible) return;
+            if (!this.is_mix_queue()) return;
+            this.render_queue_list();
+        });
+    }
+
+    /** True while the transport plays the playlist + recommendations mix. */
+    is_mix_queue() {
+        const hub = this.state.hub;
+        return !!(
+            this.transport
+            && typeof this.transport.mix_order === 'function'
+            && hub.shuffleMode === 'mix'
+            && !hub.randomMode
+            && hub.playbackContext !== 'library'
+        );
+    }
+
+    /** Recommendation entry that is streaming right now, or null. */
+    current_mix_rec_entry() {
+        const hub = this.state.hub;
+        if (!this.transport || hub.playbackContext !== 'recs') return null;
+        const vid = typeof this.transport.current_stream_vid === 'function'
+            ? String(this.transport.current_stream_vid() || '')
+            : '';
+        if (!vid) return null;
+        const order = this.transport.mix_order();
+        for (let i = 0; i < order.length; i++) {
+            if (order[i].kind === 'rec' && order[i].video_id === vid) return order[i];
+        }
+        return null;
+    }
+
+    /** Entries still to come: the mix order in mix mode, tracks otherwise. */
+    queue_tail_entries() {
+        const hub = this.state.hub;
+        if (!this.is_mix_queue()) {
+            return this.get_queue_track_ids().map(function (id) { return { kind: 'track', id: id }; });
+        }
+        const order = this.transport.mix_order();
+        if (!order.length) return [];
+        const idx = this.transport.mix_current_index(order);
+        if (idx < 0) return order.slice();
+        if (hub.repeatMode === 'off') return order.slice(idx);
+        return order.slice(idx).concat(order.slice(0, idx));
     }
 
     _wireQueueToggleButtons() {
@@ -354,9 +408,13 @@ export class PlaylistQueueController {
             qImg.loading = 'lazy';
             qImg.decoding = 'async';
             const covers = window.SpolocalCoverUrls;
-            qImg.src = covers
-                ? covers.trackCoverUrl(coverPid, trackId, youtubeVid)
-                : ('/playlists/' + encodeURIComponent(coverPid) + '/tracks/' + encodeURIComponent(trackId) + '/cover');
+            if (covers) {
+                qImg.src = covers.trackCoverUrl(coverPid, trackId, youtubeVid);
+            } else if (trackId) {
+                qImg.src = '/playlists/' + encodeURIComponent(coverPid) + '/tracks/' + encodeURIComponent(trackId) + '/cover';
+            } else {
+                qImg.src = youtubeVid ? 'https://i.ytimg.com/vi/' + encodeURIComponent(youtubeVid) + '/mqdefault.jpg' : '';
+            }
             qImg.addEventListener('error', function () {
                 this.onerror = null;
                 this.style.opacity = '0';
@@ -379,7 +437,19 @@ export class PlaylistQueueController {
         const playingTracks = (hub.playingTracks && hub.playingTracks.length) ? hub.playingTracks : hub.tracks;
         const currentSourcePid = String(hub.playingPlaylistId || hub.playlistId || '');
 
-        if (hub.currentTrackId) {
+        const mixRec = this.is_mix_queue() ? this.current_mix_rec_entry() : null;
+
+        if (mixRec) {
+            any = true;
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'queue-row w-full text-left';
+            append_thumb_meta(row, currentSourcePid, '', mixRec.title, mixRec.artist, true, mixRec.video_id);
+            row.addEventListener('click', () => {
+                if (this.transport) this.transport.play_mix_entry(mixRec);
+            });
+            hub.queueList.appendChild(row);
+        } else if (hub.currentTrackId) {
             const tloc = playingTracks.find(function (x) { return x.id === hub.currentTrackId; });
             if (tloc && tloc.play_src) {
                 any = true;
@@ -435,10 +505,27 @@ export class PlaylistQueueController {
             hub.queueList.appendChild(row);
         });
 
-        const tailIds = this.get_queue_track_ids();
+        const tailEntries = this.queue_tail_entries();
         let skipFirstIfCurrent = true;
-        tailIds.forEach((tid) => {
-            if (skipFirstIfCurrent && tid === hub.currentTrackId) {
+        tailEntries.forEach((entry) => {
+            if (entry.kind === 'rec') {
+                if (skipFirstIfCurrent && mixRec && entry.video_id === mixRec.video_id) {
+                    skipFirstIfCurrent = false;
+                    return;
+                }
+                any = true;
+                const row = document.createElement('button');
+                row.type = 'button';
+                row.className = 'queue-row w-full text-left';
+                append_thumb_meta(row, currentSourcePid, '', entry.title, entry.artist, false, entry.video_id);
+                row.addEventListener('click', () => {
+                    if (this.transport) this.transport.play_mix_entry(entry);
+                });
+                hub.queueList.appendChild(row);
+                return;
+            }
+            const tid = entry.id;
+            if (skipFirstIfCurrent && !mixRec && tid === hub.currentTrackId) {
                 skipFirstIfCurrent = false;
                 return;
             }

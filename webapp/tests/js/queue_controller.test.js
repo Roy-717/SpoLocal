@@ -665,6 +665,94 @@ describe('render_queue_list', () => {
     });
 });
 
+describe('render_queue_list in mix mode', () => {
+    const order = [
+        { kind: 'track', id: 'a' },
+        { kind: 'rec', video_id: 'r1', title: 'R1', artist: 'AR1' },
+        { kind: 'track', id: 'b' },
+        { kind: 'rec', video_id: 'r2', title: 'R2', artist: 'AR2' },
+    ];
+    const playingTracks = [
+        { id: 'a', play_src: '/a', title: 'A', artist: 'Ar' },
+        { id: 'b', play_src: '/b', title: 'B', artist: 'Br' },
+    ];
+
+    function make_mix_controller(overrides = {}) {
+        const out = make_controller({
+            queueList: make_queue_list(),
+            shuffleMode: 'mix',
+            playbackContext: 'playlist',
+            playingTracks: playingTracks,
+            playable: [{ id: 'a' }, { id: 'b' }],
+            ...overrides,
+        });
+        const { ctrl, hub, transport } = out;
+        transport.mix_order = vi.fn(() => order);
+        transport.current_stream_vid = vi.fn(() => String(hub.searchStreamHit && hub.searchStreamHit.video_id || ''));
+        transport.mix_current_index = vi.fn((o) => {
+            const vid = transport.current_stream_vid();
+            if (hub.playbackContext === 'recs' && vid) {
+                const ri = o.findIndex((e) => e.kind === 'rec' && e.video_id === vid);
+                if (ri >= 0) return ri;
+            }
+            return o.findIndex((e) => e.kind === 'track' && e.id === hub.currentTrackId);
+        });
+        transport.play_mix_entry = vi.fn();
+        return out;
+    }
+
+    it('lists the recommendations between the playlist tracks', () => {
+        const { ctrl, hub } = make_mix_controller({ currentTrackId: 'a' });
+        ctrl.render_queue_list();
+        const rows = hub.queueList.querySelectorAll('.queue-row');
+        expect(rows.length).toBe(4);
+        expect(rows[0].classList.contains('queue-row--current')).toBe(true);
+        expect(rows[1].querySelector('.queue-row-title').textContent).toBe('R1');
+        expect(rows[2].querySelector('.queue-row-title').textContent).toBe('B');
+        expect(rows[3].querySelector('.queue-row-title').textContent).toBe('R2');
+    });
+
+    it('plays a recommendation when its row is clicked', () => {
+        const { ctrl, hub, transport } = make_mix_controller({ currentTrackId: 'a' });
+        ctrl.render_queue_list();
+        hub.queueList.querySelectorAll('.queue-row')[1].click();
+        expect(transport.play_mix_entry).toHaveBeenCalledWith(order[1]);
+    });
+
+    it('shows the streaming recommendation as the current row', () => {
+        const { ctrl, hub } = make_mix_controller({
+            currentTrackId: 'a',
+            playbackContext: 'recs',
+            searchStreamHit: { video_id: 'r2' },
+        });
+        ctrl.render_queue_list();
+        const rows = hub.queueList.querySelectorAll('.queue-row');
+        expect(rows.length).toBe(1);
+        expect(rows[0].classList.contains('queue-row--current')).toBe(true);
+        expect(rows[0].querySelector('.queue-row-title').textContent).toBe('R2');
+    });
+
+    it('falls back to the normal track queue outside mix mode', () => {
+        const { ctrl, hub, transport } = make_mix_controller({
+            currentTrackId: 'a',
+            shuffleMode: 'shuffle',
+        });
+        ctrl.render_queue_list();
+        expect(transport.mix_order).not.toHaveBeenCalled();
+        expect(hub.queueList.querySelectorAll('.queue-row').length).toBe(2);
+    });
+
+    it('ignores mix mode in the library context', () => {
+        const { ctrl, hub, transport } = make_mix_controller({
+            currentTrackId: 'a',
+            playbackContext: 'library',
+        });
+        ctrl.render_queue_list();
+        expect(transport.mix_order).not.toHaveBeenCalled();
+        expect(hub.queueList.querySelectorAll('.queue-row').length).toBe(2);
+    });
+});
+
 describe('toggleQueue and visibility', () => {
     it('toggles the flag, the panel and the body class', () => {
         const panel = document.createElement('div');
@@ -769,5 +857,30 @@ describe('init', () => {
         ctrl.init();
         inner.click();
         expect(hub.queueVisible).toBe(true);
+    });
+
+    it('re-renders the mix queue when the recommendations finish loading', () => {
+        const queueList = make_queue_list();
+        const { ctrl, hub, transport } = make_controller({
+            queueList,
+            queueVisible: true,
+            shuffleMode: 'mix',
+        });
+        transport.mix_order = vi.fn(() => []);
+        transport.mix_current_index = vi.fn(() => -1);
+        ctrl.init();
+        const spy = vi.spyOn(ctrl, 'render_queue_list');
+        window.dispatchEvent(new CustomEvent('spolocal:mix-recommendations-rendered'));
+        expect(spy).toHaveBeenCalled();
+    });
+
+    it('keeps the queue untouched for other modes when recommendations load', () => {
+        const queueList = make_queue_list();
+        const { ctrl, transport } = make_controller({ queueList, queueVisible: true });
+        transport.mix_order = vi.fn(() => []);
+        ctrl.init();
+        const spy = vi.spyOn(ctrl, 'render_queue_list');
+        window.dispatchEvent(new CustomEvent('spolocal:mix-recommendations-rendered'));
+        expect(spy).not.toHaveBeenCalled();
     });
 });

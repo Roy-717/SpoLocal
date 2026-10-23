@@ -191,6 +191,21 @@ describe('onPlaybackQualityChanged', () => {
         await controller.onPlaybackQualityChanged(false);
         expect(fetchPayload).not.toHaveBeenCalled();
     });
+
+    it('leaves a search stream alone when a stale library track is current', async () => {
+        // A finished download used to re-resolve hub.currentTrackId, which still
+        // pointed at the library track the stream replaced, and played that file.
+        const { controller, hub } = makeController();
+        hub.searchStreamActive = true;
+        hub.currentTrackId = 't1';
+        const fetchPayload = vi.spyOn(controller, 'fetchTrackPayload');
+        const replace = vi.spyOn(controller, 'replace_audio_src');
+
+        await controller.onPlaybackQualityChanged(false);
+
+        expect(fetchPayload).not.toHaveBeenCalled();
+        expect(replace).not.toHaveBeenCalled();
+    });
 });
 
 describe('stream loudness', () => {

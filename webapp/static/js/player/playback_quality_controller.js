@@ -166,6 +166,10 @@ export class PlaybackQualityController {
             this.lyrics.reload_stream_video_if_loaded();
             this.lyrics.loadCover(hub.currentTrackId, hub.playingPlaylistId || hub.playlistId);
         }
+        // A search stream is what is actually playing. hub.currentTrackId still
+        // points at the library track it replaced, so resolving that track here
+        // would swap the stream for its local file and play the wrong song.
+        if (hub.searchStreamActive) return;
         if (!hub.currentTrackId) return;
         const prefs = window.SpolocalQualityPrefs;
         const playback_q = prefs ? String(prefs.playbackKbps()) : '192';

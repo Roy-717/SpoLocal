@@ -573,8 +573,8 @@ class AppShellController {
             hub.searchStreamHit = hit;
             hub.playbackContext = 'recs';
             hub._mediaDecodeRetries = 0;
-            if (typeof hub.applyStreamLoudness === 'function') hub.applyStreamLoudness(vid);
             hub.audio.pause();
+            if (typeof hub.applyStreamLoudness === 'function') hub.applyStreamLoudness(vid);
             const stream_src = AppShellController.streamSrcForVideoId(vid);
             const after_meta = () => {
                 hub.titleEl && (hub.titleEl.textContent = hit.title || '');
@@ -583,6 +583,7 @@ class AppShellController {
                 if (hub.lyricsController) hub.lyricsController.load_youtube_cover(vid);
                 if (hub.queueVisible && hub.queue) hub.queue.render_queue_list();
                 if (hub.lyricsVisible && hub.lyricsController) hub.lyricsController.fetchLyrics(true);
+                if (typeof hub.prefetchNextLoudness === 'function') hub.prefetchNextLoudness();
                 // Once playback actually starts, swap the loading spinner for the pause icon.
                 if (btn && btn.classList.contains('track-play--row')) {
                     delete btn.dataset.loading;

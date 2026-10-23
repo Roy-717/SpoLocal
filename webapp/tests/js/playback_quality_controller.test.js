@@ -229,6 +229,7 @@ describe('stream loudness', () => {
     }
 
     afterEach(() => {
+        vi.useRealTimers();
         vi.unstubAllGlobals();
     });
 
@@ -272,6 +273,85 @@ describe('stream loudness', () => {
         await controller.apply_stream_loudness('abc');
 
         expect(norm.set_track_gain_db).not.toHaveBeenCalled();
+    });
+
+    it('resets to neutral while a new stream is measured', async () => {
+        const { controller, hub, norm } = makeStreamController();
+        hub.searchStreamActive = true;
+        hub.searchStreamHit = { video_id: 'abc' };
+        vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ loudness_gain_db: null, pending: true }),
+        })));
+        vi.spyOn(controller, 'poll_stream_loudness').mockResolvedValue();
+
+        await controller.apply_stream_loudness('abc');
+
+        expect(norm.set_track_gain_db).toHaveBeenCalledWith(0);
+    });
+
+    it('reuses a measured gain without fetching again', async () => {
+        const { controller, hub, norm } = makeStreamController();
+        hub.searchStreamActive = true;
+        hub.searchStreamHit = { video_id: 'abc' };
+        const fetch_mock = vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ loudness_gain_db: -4.4 }),
+        }));
+        vi.stubGlobal('fetch', fetch_mock);
+
+        await controller.apply_stream_loudness('abc');
+        await controller.apply_stream_loudness('abc');
+
+        expect(fetch_mock).toHaveBeenCalledTimes(1);
+        expect(norm.set_track_gain_db).toHaveBeenLastCalledWith(-4.4);
+    });
+
+    it('prefetches a stream gain into the session cache', async () => {
+        const { controller } = makeStreamController();
+        vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ loudness_gain_db: -6.4 }),
+        })));
+
+        controller.prefetch_stream_loudness('abc');
+
+        await vi.waitFor(() => expect(controller._stream_gains.abc).toBe(-6.4));
+    });
+
+    it('keeps polling a prefetch until the measured gain lands', async () => {
+        const { controller } = makeStreamController();
+        vi.useFakeTimers();
+        let calls = 0;
+        vi.stubGlobal('fetch', vi.fn(() => {
+            calls += 1;
+            const body = calls === 1
+                ? { loudness_gain_db: null, pending: true }
+                : { loudness_gain_db: 0.5 };
+            return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+        }));
+
+        controller.prefetch_stream_loudness('abc');
+        await vi.advanceTimersByTimeAsync(2100);
+
+        expect(controller._stream_gains.abc).toBe(0.5);
+    });
+
+    it('applies a prefetched gain without a neutral reset', async () => {
+        const { controller, hub, norm } = makeStreamController();
+        hub.searchStreamActive = true;
+        hub.searchStreamHit = { video_id: 'abc' };
+        vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ loudness_gain_db: 0.5 }),
+        })));
+
+        controller.prefetch_stream_loudness('abc');
+        await vi.waitFor(() => expect(controller._stream_gains.abc).toBe(0.5));
+        await controller.apply_stream_loudness('abc');
+
+        expect(norm.set_track_gain_db).toHaveBeenCalledTimes(1);
+        expect(norm.set_track_gain_db).toHaveBeenCalledWith(0.5);
     });
 
     it('routes apply_track_loudness to the stream path', async () => {

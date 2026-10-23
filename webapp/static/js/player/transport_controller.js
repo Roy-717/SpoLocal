@@ -905,6 +905,18 @@ export class PlaylistTransportController {
         if (idx < 0) idx = delta > 0 ? -1 : 0;
         const target = order[this.wrap_index(idx + delta, order.length)];
         if (!this.play_mix_entry(target)) this.stop_playback();
+        this.prefetch_next_loudness();
+    }
+
+    /** Measure the upcoming stream while the current track plays. */
+    prefetch_next_loudness() {
+        if (!this.quality) return;
+        const order = this.mix_order();
+        const idx = this.mix_current_index(order);
+        if (idx < 0) return;
+        const next = order[this.wrap_index(idx + 1, order.length)];
+        if (!next || next.kind !== 'rec') return;
+        this.quality.prefetch_stream_loudness(next.video_id);
     }
 
     /**

@@ -57,6 +57,26 @@ class StuckAudioContext extends FakeAudioContext {
     }
 }
 
+class RunningAudioContext extends FakeAudioContext {
+    constructor() {
+        super();
+        this.state = 'running';
+        this.currentTime = 10;
+    }
+    createGain() {
+        return {
+            gain: {
+                value: 1,
+                cancelAndHoldAtTime: vi.fn(),
+                cancelScheduledValues: vi.fn(),
+                setValueAtTime: vi.fn(),
+                linearRampToValueAtTime: vi.fn(),
+            },
+            connect: vi.fn(),
+        };
+    }
+}
+
 beforeEach(() => {
     localStorage.clear();
 });
@@ -98,6 +118,36 @@ describe('volume and gain', () => {
         expect(ctrl.enabled).toBe(false);
         ctrl.set_enabled(true);
         expect(ctrl.enabled).toBe(true);
+    });
+});
+
+describe('gain fade', () => {
+    it('ramps a measured gain in instead of jumping', () => {
+        globalThis.AudioContext = RunningAudioContext;
+        const audio = fakeAudio();
+        audio.paused = false;
+        const ctrl = new AudioNormalizationController(audio);
+        ctrl.wire();
+        expect(ctrl._wired).toBe(true);
+
+        ctrl.set_track_gain_db(-6);
+
+        const param = ctrl.gain_node.gain;
+        expect(param.linearRampToValueAtTime).toHaveBeenCalledTimes(1);
+        const [value, when] = param.linearRampToValueAtTime.mock.calls[0];
+        expect(value).toBeCloseTo(Math.pow(10, -6 / 20), 5);
+        expect(when).toBeCloseTo(10.4, 5);
+    });
+
+    it('sets the gain instantly when the context is not running', () => {
+        const audio = fakeAudio();
+        const ctrl = new AudioNormalizationController(audio);
+        ctrl.gain_node = { gain: { value: 1 } };
+        ctrl.ctx = { state: 'suspended', currentTime: 0 };
+
+        ctrl.set_track_gain_db(-6);
+
+        expect(ctrl.gain_node.gain.value).toBeCloseTo(Math.pow(10, -6 / 20), 5);
     });
 });
 

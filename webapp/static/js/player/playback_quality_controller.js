@@ -15,6 +15,8 @@ export class PlaybackQualityController {
         /** @type {import('./lyrics_controller.js').PlaylistLyricsController|null} */
         this.lyrics = null;
         this._audioSrcGen = 0;
+        /** Measured stream gains for this session, so replays apply instantly. */
+        this._stream_gains = {};
     }
 
     setLyricsRef(lyrics) {
@@ -285,12 +287,65 @@ export class PlaybackQualityController {
         return '';
     }
 
+    /** Ask the server to measure a stream before it starts playing. */
+    prefetch_stream_loudness(vid) {
+        const video_id = String(vid || '').trim();
+        if (!video_id || this._stream_gains[video_id] != null) return;
+        this._prefetch = this._prefetch || {};
+        if (this._prefetch[video_id]) return;
+        // The endpoint answers `pending` while it measures, so keep polling;
+        // otherwise the cache stays empty and the track starts unnormalized.
+        this._prefetch[video_id] = this._poll_stream_gain(video_id, 30).then((gain) => {
+            delete this._prefetch[video_id];
+            if (gain != null) this._stream_gains[video_id] = gain;
+            return gain;
+        });
+    }
+
+    /** Poll the endpoint until the measured gain lands, or give up. */
+    async _poll_stream_gain(video_id, attempts, should_stop) {
+        for (let i = 0; i < attempts; i += 1) {
+            if (should_stop && should_stop()) return null;
+            try {
+                const r = await fetch(
+                    '/api/stream/loudness-gain?vid=' + encodeURIComponent(video_id),
+                    { credentials: 'same-origin' },
+                );
+                if (r.ok) {
+                    const j = await r.json();
+                    if (j.loudness_gain_db != null) return j.loudness_gain_db;
+                }
+            } catch (e) {
+                return null;
+            }
+            await new Promise((res) => setTimeout(res, 2000));
+        }
+        return null;
+    }
+
     async apply_stream_loudness(vid) {
         const hub = this.state.hub;
         const norm = hub.audioNormalization;
         const video_id = String(vid || '').trim();
         if (!norm || !video_id) return;
         norm.wire();
+        const known = this._stream_gains[video_id];
+        if (known != null) {
+            if (this._current_stream_vid() !== video_id) return;
+            norm.set_track_gain_db(known);
+            return;
+        }
+        // A new stream must not inherit the previous track's gain while it is
+        // being measured; start neutral and fade the measured value in.
+        if (this._current_stream_vid() === video_id) norm.set_track_gain_db(0);
+        const prefetched = this._prefetch && this._prefetch[video_id];
+        if (prefetched) {
+            const gain = await prefetched;
+            if (gain != null) {
+                if (this._current_stream_vid() === video_id) norm.set_track_gain_db(gain);
+                return;
+            }
+        }
         try {
             const r = await fetch(
                 '/api/stream/loudness-gain?vid=' + encodeURIComponent(video_id),
@@ -299,6 +354,7 @@ export class PlaybackQualityController {
             if (!r.ok) return;
             const j = await r.json();
             if (j.loudness_gain_db != null) {
+                this._stream_gains[video_id] = j.loudness_gain_db;
                 if (this._current_stream_vid() !== video_id) return;
                 norm.set_track_gain_db(j.loudness_gain_db);
             } else if (j.pending) {
@@ -309,27 +365,11 @@ export class PlaybackQualityController {
 
     async poll_stream_loudness(video_id, norm) {
         // Measuring downloads the track once; pick up the cached gain when ready.
-        let attempts = 0;
-        while (attempts < 10 && this._current_stream_vid() === video_id) {
-            await new Promise((res) => setTimeout(res, 2000));
-            try {
-                const r = await fetch(
-                    '/api/stream/loudness-gain?vid=' + encodeURIComponent(video_id),
-                    { credentials: 'same-origin' },
-                );
-                if (!r.ok) return;
-                const j = await r.json();
-                if (j.loudness_gain_db != null) {
-                    if (this._current_stream_vid() === video_id) {
-                        norm.set_track_gain_db(j.loudness_gain_db);
-                    }
-                    return;
-                }
-            } catch (e) {
-                return;
-            }
-            attempts += 1;
-        }
+        const gain = await this._poll_stream_gain(
+            video_id, 30, () => this._current_stream_vid() !== video_id);
+        if (gain == null) return;
+        this._stream_gains[video_id] = gain;
+        if (this._current_stream_vid() === video_id) norm.set_track_gain_db(gain);
     }
 
     async apply_track_loudness(track, playlist_id) {

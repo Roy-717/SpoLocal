@@ -2,7 +2,7 @@
  * Playlist page session entry point.
  * Initializes the session controller and enables column resizing.
  */
-import { PlaylistSessionController } from './playlist/session.js?v=126';
+import { PlaylistSessionController } from './playlist/session.js?v=127';
 import { PlaylistColumnResizer } from './ui/column_resizer.js';
 import { PlaylistPlayerState } from './player/player_state.js';
 import { MseStreamController } from './player/mse_stream_controller.js?v=8';
@@ -19,5 +19,6 @@ hub.resolveCurrentPlaySrc = () => session.transport.resolveCurrentPlaySrc();
 hub.setPlayUi = (playing) => session.transport.setPlayUi(playing);
 hub.playLibraryEntry = (entry, context) => session.transport.playLibraryEntry(entry, context);
 hub.applyStreamLoudness = (vid) => session.quality.apply_stream_loudness(vid);
+hub.prefetchNextLoudness = () => session.transport.prefetch_next_loudness();
 hub.onMseStreamEnded = () => session.transport.advance_search_stream();
 PlaylistColumnResizer.init();

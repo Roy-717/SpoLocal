@@ -1,8 +1,8 @@
-import { PlaylistTransportController } from '../player/transport_controller.js?v=114';
+import { PlaylistTransportController } from '../player/transport_controller.js?v=115';
 import { PlaylistLikeController } from '../player/like_controller.js?v=1';
 import { PlaylistShuffleController } from '../player/shuffle_controller.js?v=5';
 import { PlaylistMediaSessionController } from '../player/media_session_controller.js?v=1';
-import { PlaybackQualityController } from '../player/playback_quality_controller.js?v=5';
+import { PlaybackQualityController } from '../player/playback_quality_controller.js?v=7';
 import { PlaylistQueueController } from '../player/queue_controller.js?v=93';
 import { PlaylistLyricsController } from '../player/lyrics_controller.js?v=91';
 import { PlaylistEditModalController } from '../ui/edit_modal_controller.js';
@@ -14,7 +14,7 @@ import { SettingsController } from '../ui/settings_controller.js?v=2';
 import { AccountController } from '../ui/account_controller.js?v=2';
 import { TrackInfoController } from '../ui/track_info_controller.js';
 import { TrackEditController } from '../ui/track_edit_controller.js';
-import { AudioNormalizationController } from '../player/audio_normalization_controller.js';
+import { AudioNormalizationController } from '../player/audio_normalization_controller.js?v=1';
 import { SongMixController } from '../player/song_mix_controller.js?v=95';
 
 /**

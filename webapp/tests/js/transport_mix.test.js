@@ -67,6 +67,34 @@ describe('mix_rec_entries', () => {
     });
 });
 
+describe('prefetch_next_loudness', () => {
+    it('prefetches the next recommendation', () => {
+        mount_recs(['r1', 'r2', 'r3']);
+        const { transport } = makeTransport({
+            playbackContext: 'recs',
+            searchStreamHit: { video_id: 'r1' },
+        });
+        transport.quality = { prefetch_stream_loudness: vi.fn() };
+
+        transport.prefetch_next_loudness();
+
+        expect(transport.quality.prefetch_stream_loudness).toHaveBeenCalledWith('r2');
+    });
+
+    it('does nothing when the current entry is not in the mix', () => {
+        mount_recs(['r1', 'r2']);
+        const { transport } = makeTransport({
+            playbackContext: 'recs',
+            searchStreamHit: { video_id: 'nope' },
+        });
+        transport.quality = { prefetch_stream_loudness: vi.fn() };
+
+        transport.prefetch_next_loudness();
+
+        expect(transport.quality.prefetch_stream_loudness).not.toHaveBeenCalled();
+    });
+});
+
 describe('mix_order', () => {
     it('includes every track and every recommendation', () => {
         mount_recs(['r1', 'r2', 'r3']);

@@ -145,7 +145,8 @@ export class AudioNormalizationController {
     set_track_gain_db(db) {
         const n = Number(db);
         this.track_gain_db = Number.isFinite(n) ? n : 0;
-        this._sync_gain();
+        // A measured gain arrives mid-track; ramp to it instead of jumping.
+        this._sync_gain(0.4);
     }
 
     set_enabled(on) {
@@ -153,7 +154,7 @@ export class AudioNormalizationController {
         this._sync_gain();
     }
 
-    _sync_gain() {
+    _sync_gain(fade_seconds = 0) {
         if (!this.gain_node) {
             if (this.audio_el) this.audio_el.volume = this.user_volume;
             return;
@@ -161,7 +162,23 @@ export class AudioNormalizationController {
         const prefs = window.SpolocalNormalizationPrefs;
         const use_norm = this.enabled && prefs && prefs.enabled();
         const norm_lin = use_norm ? Math.pow(10, this.track_gain_db / 20) : 1;
-        const v = this.user_volume * norm_lin;
-        this.gain_node.gain.value = Math.max(0, Math.min(4, v));
+        const v = Math.max(0, Math.min(4, this.user_volume * norm_lin));
+        const param = this.gain_node.gain;
+        const ctx = this.ctx;
+        if (fade_seconds > 0 && ctx && ctx.state === 'running'
+            && typeof param.linearRampToValueAtTime === 'function') {
+            const now = ctx.currentTime;
+            try {
+                if (typeof param.cancelAndHoldAtTime === 'function') {
+                    param.cancelAndHoldAtTime(now);
+                } else {
+                    param.cancelScheduledValues(now);
+                    param.setValueAtTime(param.value, now);
+                }
+                param.linearRampToValueAtTime(v, now + fade_seconds);
+                return;
+            } catch (e) { /* fall back to an instant set */ }
+        }
+        param.value = v;
     }
 }

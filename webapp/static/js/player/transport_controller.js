@@ -774,7 +774,8 @@ export class PlaylistTransportController {
         if (hub.mixOrder && hub.mixOrderSig === sig) return hub.mixOrder;
 
         const order = [];
-        const max_recs = tracks.length ? Math.ceil(tracks.length / 2) : recs.length;
+        // A short playlist would otherwise loop over a single recommendation.
+        const max_recs = tracks.length < 4 ? recs.length : Math.ceil(tracks.length / 2);
         const used = recs.slice(0, max_recs);
         const every = used.length ? Math.max(1, Math.round(tracks.length / used.length)) : 0;
         let ri = 0;

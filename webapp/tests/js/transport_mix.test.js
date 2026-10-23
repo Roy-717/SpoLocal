@@ -78,8 +78,21 @@ describe('mix_order', () => {
 
     it('caps recommendations at half the track count', () => {
         mount_recs(['r1', 'r2', 'r3', 'r4', 'r5']);
-        const { transport } = makeTransport({ playable: [{ id: 't1' }, { id: 't2' }] });
-        expect(kinds(transport.mix_order())).toEqual(['track:t1', 'track:t2', 'rec:r1']);
+        const { transport } = makeTransport({
+            playable: [{ id: 't1' }, { id: 't2' }, { id: 't3' }, { id: 't4' }, { id: 't5' }, { id: 't6' }],
+        });
+        expect(kinds(transport.mix_order())).toEqual([
+            'track:t1', 'track:t2', 'rec:r1', 'track:t3', 'track:t4', 'rec:r2',
+            'track:t5', 'track:t6', 'rec:r3',
+        ]);
+    });
+
+    it('uses the whole pool for a one track playlist', () => {
+        mount_recs(['r1', 'r2', 'r3', 'r4']);
+        const { transport } = makeTransport({ playable: [{ id: 't1' }] });
+        expect(kinds(transport.mix_order())).toEqual([
+            'track:t1', 'rec:r1', 'rec:r2', 'rec:r3', 'rec:r4',
+        ]);
     });
 
     it('keeps the tracks when there are no recommendations', () => {

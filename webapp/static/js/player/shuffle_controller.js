@@ -136,7 +136,6 @@ export class PlaylistShuffleController {
             if (mode === 'shuffle') title = 'Shuffle: on';
             else if (mode === 'mix') title = 'Mix: playlist + recommendations';
             hub.btnShuffle.setAttribute('title', title);
-            hub.btnShuffle.classList.toggle('is-mix', mode === 'mix');
         }
         if (hub.shuffleSparkle) {
             hub.shuffleSparkle.classList.toggle('hidden', mode !== 'mix');

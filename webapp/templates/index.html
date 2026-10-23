@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="/static/app.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script>window.__likedPlaylistId = {{ liked_playlist_id | tojson }};</script>
-    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=41">
+    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=42">
 </head>
 <body class="font-sans h-screen flex flex-col overflow-hidden">
     <!-- Top bar -->
@@ -645,11 +645,11 @@
             </div>
             <div class="flex items-center justify-center gap-0.5 sm:gap-2 shrink-0 flex-nowrap">
                 <button type="button" id="player-shuffle" class="player-control-btn--muted w-10 h-10 lg:w-9 lg:h-9 rounded-full hover:text-white text-lg leading-none shrink-0 flex items-center justify-center" title="Shuffle: off" aria-pressed="false">
-                    <svg width="24" height="24" viewBox="0 0 700 700" fill="currentColor" aria-hidden="true">
+                    <svg width="30" height="30" viewBox="0 0 850 850" fill="currentColor" aria-hidden="true">
                         <g id="player-shuffle-sparkle" class="hidden">
-                            <path d="M88 8 L112 64 L168 88 L112 112 L88 168 L64 112 L8 88 L64 64 Z"/>
+                            <path d="M84 4 L108 60 L164 84 L108 108 L84 164 L60 108 L4 84 L60 60 Z"/>
                         </g>
-                        <g id="player-shuffle-arrows">
+                        <g id="player-shuffle-arrows" transform="translate(169 169)">
                             <path d="M403.8 34.4c12-5 25.7-2.2 34.9 6.9l64 64c6 6 9.4 14.1 9.4 22.6s-3.4 16.6-9.4 22.6l-64 64c-9.2 9.2-22.9 11.9-34.9 6.9s-19.8-16.6-19.8-29.6V160H352c-10.1 0-19.6 4.7-25.6 12.8L284 229.3 244 176l31.2-41.6C293.3 110.2 321.8 96 352 96h32V64c0-12.9 7.8-24.6 19.8-29.6zM164 282.7L204 336l-31.2 41.6C154.7 401.8 126.2 416 96 416H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H96c10.1 0 19.6-4.7 25.6-12.8L164 282.7zm274.6 188c-9.2 9.2-22.9 11.9-34.9 6.9s-19.8-16.6-19.8-29.6V416H352c-30.2 0-58.7-14.2-76.8-38.4L121.6 172.8c-6-8.1-15.5-12.8-25.6-12.8H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H96c30.2 0 58.7 14.2 76.8 38.4L326.4 339.2c6 8.1 15.5 12.8 25.6 12.8h32V320c0-12.9 7.8-24.6 19.8-29.6s25.7-2.2 34.9 6.9l64 64c6 6 9.4 14.1 9.4 22.6s-3.4 16.6-9.4 22.6l-64 64z"/>
                         </g>
                     </svg>

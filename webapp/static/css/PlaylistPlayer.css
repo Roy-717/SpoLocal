@@ -816,8 +816,7 @@ body { background: #121212; color: #fff; }
 #player-cover-fallback { display: none; }
 .player-control-btn--active { color: #1DB954 !important; }
 .player-control-btn--muted { color: #727272; }
-#player-shuffle-arrows { transform-box: view-box; transform-origin: 0 0; transform: translate(94px, 94px); transition: transform .15s ease; }
-#player-shuffle.is-mix #player-shuffle-arrows { transform: translate(188px, 188px); }
+
 #player-repeat-wrap { position: relative; display: inline-flex; align-items: center; justify-content: center; }
 #player-repeat-one-badge {
     position: absolute; bottom: 2px; right: 2px; font-size: 8px; font-weight: 800;

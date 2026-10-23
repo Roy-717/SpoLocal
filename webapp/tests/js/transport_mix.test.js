@@ -191,22 +191,49 @@ describe('playAtDeltaMix', () => {
         expect(transport.playTrackById).toHaveBeenCalledWith('t4');
     });
 
-    it('reshuffles a fresh cycle instead of repeating the same order', () => {
+    it('starts a fresh cycle without repeating the song that just ended', () => {
         const { transport } = makeTransport({ currentTrackId: 't4' });
         transport.mix_order();
         transport.shuffle = { shuffleArrayInPlace: vi.fn((arr) => arr.reverse()) };
         transport.playAtDeltaMix(1);
-        expect(kinds(transport.mix_order())).toEqual(['track:t4', 'track:t3', 'track:t2', 'track:t1']);
         expect(transport.playTrackById).toHaveBeenCalledWith('t3');
+        expect(kinds(transport.mix_order())[0]).toBe('track:t3');
     });
 
-    it('keeps the current entry first when the cycle restarts', () => {
+    it('drops the finished song from the window', () => {
         const { transport } = makeTransport({ currentTrackId: 't2' });
         transport.shuffle = { shuffleArrayInPlace: vi.fn() };
-        const current = transport.mix_order().find((e) => e.id === 't2');
-        const order = transport.reshuffle_mix_order(current);
-        expect(order[0]).toBe(current);
-        expect(order.length).toBe(4);
+        transport.playAtDeltaMix(1);
+        expect(kinds(transport.mix_order())).not.toContain('track:t2');
+    });
+
+    it('caps the window at 50 songs', () => {
+        const playable = Array.from({ length: 60 }, (_, i) => ({ id: 't' + i }));
+        const { transport } = makeTransport({ playable, currentTrackId: 't0' });
+        transport.shuffle = { shuffleArrayInPlace: vi.fn() };
+        expect(transport.mix_order().length).toBe(50);
+    });
+
+    it('removes the finished song and appends one new song', () => {
+        const playable = Array.from({ length: 60 }, (_, i) => ({ id: 't' + i }));
+        const { transport } = makeTransport({ playable, currentTrackId: 't0' });
+        transport.shuffle = { shuffleArrayInPlace: vi.fn() };
+        transport.playAtDeltaMix(1);
+        const after = kinds(transport.mix_order());
+        expect(after.length).toBe(50);
+        expect(after).not.toContain('track:t0');
+        expect(after).toContain('track:t50');
+        expect(transport.playTrackById).toHaveBeenCalledWith('t1');
+    });
+
+    it('keeps the window free of duplicates while it rolls', () => {
+        const playable = Array.from({ length: 60 }, (_, i) => ({ id: 't' + i }));
+        const { transport } = makeTransport({ playable, currentTrackId: 't0' });
+        transport.shuffle = { shuffleArrayInPlace: vi.fn() };
+        for (let i = 0; i < 30; i++) transport.playAtDeltaMix(1);
+        const after = kinds(transport.mix_order());
+        expect(after.length).toBe(50);
+        expect(new Set(after).size).toBe(after.length);
     });
 
     it('asks for recommendations when the mix has none', () => {

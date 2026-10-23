@@ -3,6 +3,13 @@
  */
 import { PlaylistPlayLog } from '../playlist/play_log.js?v=1';
 
+/** Maximum number of songs the mix queue keeps ahead of the current one. */
+const MIX_WINDOW_SIZE = 50;
+
+function mix_entry_key(entry) {
+    return entry.kind === 'track' ? 'track:' + String(entry.id) : 'rec:' + String(entry.video_id);
+}
+
 export class PlaylistTransportController {
     /** @param {import('./player_state.js').PlaylistPlayerState} state */
     constructor(state) {
@@ -763,21 +770,34 @@ export class PlaylistTransportController {
         return rows;
     }
 
-    /** Every playlist track plus every recommendation, in random order. */
-    mix_order() {
+    /** Every playlist track plus every recommendation, with a cache signature. */
+    mix_pool() {
         const hub = this.state.hub;
         const tracks = hub.playable || [];
         const recs = this.mix_rec_entries();
         const sig = tracks.map((t) => String(t.id)).join('|')
             + '::' + recs.map((r) => r.video_id).join('|');
+        const pool = tracks.map((t) => ({ kind: 'track', id: t.id })).concat(recs);
+        return { pool, sig };
+    }
+
+    /**
+     * The live mix window: the current entry plus up to 49 upcoming ones.
+     * Rebuilt when the playlist or the recommendations change.
+     */
+    mix_order() {
+        const hub = this.state.hub;
+        const { pool, sig } = this.mix_pool();
         if (hub.mixOrder && hub.mixOrderSig === sig) return hub.mixOrder;
 
-        const order = tracks.map((t) => ({ kind: 'track', id: t.id })).concat(recs);
-        if (this.shuffle) this.shuffle.shuffleArrayInPlace(order);
+        const cycle = pool.slice();
+        if (this.shuffle) this.shuffle.shuffleArrayInPlace(cycle);
 
-        hub.mixOrder = order;
+        hub.mixCycle = cycle;
+        hub.mixCycleIdx = Math.min(MIX_WINDOW_SIZE, cycle.length);
+        hub.mixOrder = cycle.slice(0, MIX_WINDOW_SIZE);
         hub.mixOrderSig = sig;
-        return order;
+        return hub.mixOrder;
     }
 
     /** Index of the playing item inside the mix order, or -1. */
@@ -832,7 +852,7 @@ export class PlaylistTransportController {
         return false;
     }
 
-    /** Advance through the playlist + recommendations mix, reshuffling each cycle. */
+    /** Advance through the playlist + recommendations mix, one rolling window. */
     playAtDeltaMix(delta) {
         let order = this.mix_order();
         if (!order.length) {
@@ -841,25 +861,62 @@ export class PlaylistTransportController {
         }
         if (!order.some((e) => e.kind === 'rec')) this.ensure_mix_recommendations();
         let idx = this.mix_current_index(order);
-        if (idx < 0) idx = delta > 0 ? -1 : 0;
-        let next_idx = idx + delta;
-        if (next_idx < 0 || next_idx >= order.length) {
-            order = this.reshuffle_mix_order(idx >= 0 ? order[idx] : null);
-            idx = idx >= 0 ? 0 : -1;
-            next_idx = idx + delta;
+        if (delta > 0 && idx >= 0) {
+            this.advance_mix_window(order[idx]);
+            order = this.mix_order();
+            idx = -1;
         }
-        const target = order[this.wrap_index(next_idx, order.length)];
+        if (idx < 0) idx = delta > 0 ? -1 : 0;
+        const target = order[this.wrap_index(idx + delta, order.length)];
         if (!this.play_mix_entry(target)) this.stop_playback();
     }
 
-    /** Start a fresh cycle with the current entry first, so the mix never repeats. */
-    reshuffle_mix_order(current_entry) {
+    /**
+     * Drop the finished entry (and anything skipped before it), then top the
+     * window back up to MIX_WINDOW_SIZE. Small pools play through and refill.
+     */
+    advance_mix_window(finished_entry) {
         const hub = this.state.hub;
-        const rest = this.mix_order().filter((e) => e !== current_entry);
-        if (this.shuffle) this.shuffle.shuffleArrayInPlace(rest);
-        const order = current_entry ? [current_entry].concat(rest) : rest;
-        hub.mixOrder = order;
-        return order;
+        const window = hub.mixOrder || [];
+        const idx = window.indexOf(finished_entry);
+        if (idx >= 0) window.splice(0, idx + 1);
+
+        const pool = this.mix_pool().pool;
+        if (pool.length <= MIX_WINDOW_SIZE) {
+            if (!window.length) {
+                const cycle = pool.slice();
+                if (this.shuffle) this.shuffle.shuffleArrayInPlace(cycle);
+                // A fresh cycle must not open with the song that just ended.
+                if (finished_entry && cycle.length > 1
+                    && mix_entry_key(cycle[0]) === mix_entry_key(finished_entry)) {
+                    cycle.push(cycle.shift());
+                }
+                window.push(...cycle);
+            }
+            return window;
+        }
+        while (window.length < MIX_WINDOW_SIZE) {
+            const entry = this.next_mix_cycle_entry(window);
+            if (!entry) break;
+            window.push(entry);
+        }
+        return window;
+    }
+
+    /** Next unseen entry from the shuffled pool, or null when the pool is spent. */
+    next_mix_cycle_entry(window) {
+        const hub = this.state.hub;
+        let cycle = hub.mixCycle;
+        if (!cycle || hub.mixCycleIdx >= cycle.length) {
+            const in_window = new Set(window.map(mix_entry_key));
+            const candidates = this.mix_pool().pool.filter((e) => !in_window.has(mix_entry_key(e)));
+            if (!candidates.length) return null;
+            if (this.shuffle) this.shuffle.shuffleArrayInPlace(candidates);
+            cycle = candidates;
+            hub.mixCycle = cycle;
+            hub.mixCycleIdx = 0;
+        }
+        return cycle[hub.mixCycleIdx++] || null;
     }
 
     /** Load the playlist recommendations once so mix mode has something to add. */
@@ -871,6 +928,8 @@ export class PlaylistTransportController {
         hub._mixRecsRequestedFor = pid;
         hub.mixOrder = null;
         hub.mixOrderSig = '';
+        hub.mixCycle = null;
+        hub.mixCycleIdx = 0;
         window.ensurePlaylistRecommendations(pid);
     }
 

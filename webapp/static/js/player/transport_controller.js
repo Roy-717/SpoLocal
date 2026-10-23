@@ -1137,8 +1137,12 @@ export class PlaylistTransportController {
     isStreamingPlayback() {
         const hub = this.state.hub;
         if (!hub || !hub.audio) return false;
-        const raw_src = String(hub.audio.currentSrc || hub.audio.src || '').trim();
-        if (!raw_src) return false;
+        if (hub.searchStreamActive) return true;
+        // Prefer the src attribute: currentSrc keeps the previous resource until
+        // the browser selects the new one, so it reports a stale stream URL right
+        // after a local track replaces a stream.
+        const raw_src = String(hub.audio.src || hub.audio.currentSrc || '').trim();
+        if (!raw_src || raw_src.startsWith('blob:')) return false;
         try {
             const u = new URL(raw_src, window.location.href);
             if (u.pathname.startsWith('/media/')) return false;

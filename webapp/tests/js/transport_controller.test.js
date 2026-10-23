@@ -411,6 +411,25 @@ describe('isStreamingPlayback', () => {
         expect(with_src('https://cdn.example.com/a.webm').isStreamingPlayback()).toBe(true);
     });
 
+    it('is false for a local file while currentSrc still holds the old stream', () => {
+        const { transport, hub } = make_transport();
+        hub.audio.src = '/media/t1.webm';
+        hub.audio.currentSrc = '/api/stream?vid=old';
+        expect(transport.isStreamingPlayback()).toBe(false);
+    });
+
+    it('is true for an active search stream even when the src is a blob', () => {
+        const { transport, hub } = make_transport({ searchStreamActive: true });
+        hub.audio.src = 'blob:https://localhost:8000/abc';
+        expect(transport.isStreamingPlayback()).toBe(true);
+    });
+
+    it('is false for a local blob source', () => {
+        const { transport, hub } = make_transport();
+        hub.audio.src = 'blob:https://localhost:8000/abc';
+        expect(transport.isStreamingPlayback()).toBe(false);
+    });
+
     it('shows the stream badge while a stream plays', () => {
         const streamBadgeEl = document.createElement('span');
         streamBadgeEl.classList.add('hidden');
@@ -420,6 +439,17 @@ describe('isStreamingPlayback', () => {
         transport.setPlayUi(true);
         expect(streamBadgeEl.classList.contains('hidden')).toBe(false);
         expect(streamBadgeEl.title).toBe('Stream');
+    });
+
+    it('keeps the stream badge hidden for a local track with a stale currentSrc', () => {
+        const streamBadgeEl = document.createElement('span');
+        streamBadgeEl.classList.add('hidden');
+        const iconMainPlay = document.createElement('i');
+        const { transport, hub } = make_transport({ streamBadgeEl, iconMainPlay });
+        hub.audio.src = '/media/t1.webm';
+        hub.audio.currentSrc = '/api/stream?vid=old';
+        transport.setPlayUi(true);
+        expect(streamBadgeEl.classList.contains('hidden')).toBe(true);
     });
 });
 

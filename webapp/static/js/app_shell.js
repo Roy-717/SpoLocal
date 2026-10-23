@@ -877,13 +877,6 @@ class AppShellController {
 
         const addRow = document.createElement('div');
         addRow.className = 'mt-3 px-0.5';
-        const badge = document.createElement('span');
-        badge.id = 'player-stream-badge';
-        badge.className = 'hidden text-[10px] sm:text-xs shrink-0 w-3.5 sm:w-4 text-center';
-        badge.style.color = '#1DB954';
-        badge.style.marginLeft = '4px';
-        badge.style.marginRight = '4px';
-        badge.textContent = 'Ⓢ';
         const bAdd = document.createElement('button');
         bAdd.type = 'button';
         bAdd.className = 'open-add-to-playlist w-full rounded-full bg-transparent py-1.5 text-center text-xs font-semibold text-[#B3B3B3] ring-1 ring-[#3E3E3E] transition hover:bg-[#1DB954] hover:text-black hover:ring-[#1DB954]';
@@ -893,7 +886,6 @@ class AppShellController {
             ev.preventDefault();
             this.openAddToPlaylistPopover(hit, bAdd);
         });
-        addRow.appendChild(badge);
         addRow.appendChild(bAdd);
         card.appendChild(addRow);
 

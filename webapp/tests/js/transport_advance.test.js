@@ -69,7 +69,7 @@ describe('playAtDelta routing', () => {
     });
 
     it('routes playlist playback through the mix in mix mode', () => {
-        const { transport } = makeTransport({ playbackContext: 'playlist', repeatMode: 'mix' });
+        const { transport } = makeTransport({ playbackContext: 'playlist', shuffleMode: 'mix' });
         transport.playAtDelta(1);
         expect(transport.playAtDeltaMix).toHaveBeenCalledWith(1);
         expect(transport.playAtDeltaPlaylistBody).not.toHaveBeenCalled();
@@ -77,13 +77,13 @@ describe('playAtDelta routing', () => {
     });
 
     it('keeps library playback out of the mix', () => {
-        const { transport } = makeTransport({ playbackContext: 'library', repeatMode: 'mix' });
+        const { transport } = makeTransport({ playbackContext: 'library', shuffleMode: 'mix' });
         transport.playAtDelta(1);
         expect(transport.playAtDeltaMix).not.toHaveBeenCalled();
     });
 
     it('keeps random mode out of the mix', () => {
-        const { transport } = makeTransport({ playbackContext: 'playlist', repeatMode: 'mix', randomMode: true });
+        const { transport } = makeTransport({ playbackContext: 'playlist', shuffleMode: 'mix', randomMode: true });
         transport.playAtDelta(1);
         expect(transport.playAtDeltaMix).not.toHaveBeenCalled();
     });

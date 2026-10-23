@@ -16,8 +16,17 @@ export class PlaylistShuffleController {
         this.queue = queue;
     }
 
+    /** 'off', 'shuffle', or 'mix' (shuffle plus playlist recommendations). */
+    shuffle_mode() {
+        const hub = this.state.hub;
+        if (hub.shuffleMode === 'off' || hub.shuffleMode === 'shuffle' || hub.shuffleMode === 'mix') {
+            return hub.shuffleMode;
+        }
+        return hub.shuffleOn ? 'shuffle' : 'off';
+    }
+
     persistShuffle() {
-        try { localStorage.setItem(this.state.hub.LS_SHUFFLE, String(this.state.hub.shuffleOn)); } catch (e) {}
+        try { localStorage.setItem(this.state.hub.LS_SHUFFLE, this.shuffle_mode()); } catch (e) {}
     }
 
     persistRepeat() {
@@ -117,10 +126,19 @@ export class PlaylistShuffleController {
 
     updateShuffleRepeatUi() {
         const hub = this.state.hub;
+        const mode = this.shuffle_mode();
         if (hub.btnShuffle) {
-            hub.btnShuffle.classList.toggle('player-control-btn--active', hub.shuffleOn);
-            hub.btnShuffle.classList.toggle('player-control-btn--muted', !hub.shuffleOn);
-            hub.btnShuffle.setAttribute('aria-pressed', hub.shuffleOn ? 'true' : 'false');
+            const active = mode !== 'off';
+            hub.btnShuffle.classList.toggle('player-control-btn--active', active);
+            hub.btnShuffle.classList.toggle('player-control-btn--muted', !active);
+            hub.btnShuffle.setAttribute('aria-pressed', active ? 'true' : 'false');
+            let title = 'Shuffle: off';
+            if (mode === 'shuffle') title = 'Shuffle: on';
+            else if (mode === 'mix') title = 'Mix: playlist + recommendations';
+            hub.btnShuffle.setAttribute('title', title);
+        }
+        if (hub.shuffleMixBadge) {
+            hub.shuffleMixBadge.classList.toggle('hidden', mode !== 'mix');
         }
         if (hub.btnRepeat) {
             const active = hub.repeatMode !== 'off';
@@ -130,19 +148,10 @@ export class PlaylistShuffleController {
             let title = 'Repeat: off';
             if (hub.repeatMode === 'all') title = 'Repeat: all';
             else if (hub.repeatMode === 'one') title = 'Repeat one';
-            else if (hub.repeatMode === 'mix') title = 'Mix: playlist + recommendations';
             hub.btnRepeat.setAttribute('title', title);
-        }
-        if (hub.repeatIcon) {
-            const mix = hub.repeatMode === 'mix';
-            hub.repeatIcon.classList.toggle('fa-repeat', !mix);
-            hub.repeatIcon.classList.toggle('fa-shuffle', mix);
         }
         if (hub.repeatOneBadge) {
             hub.repeatOneBadge.classList.toggle('hidden', hub.repeatMode !== 'one');
-        }
-        if (hub.repeatMixBadge) {
-            hub.repeatMixBadge.classList.toggle('hidden', hub.repeatMode !== 'mix');
         }
         if (hub.queueVisible && this.queue) {
             this.queue.render_queue_list();

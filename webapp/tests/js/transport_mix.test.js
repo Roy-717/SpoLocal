@@ -5,7 +5,8 @@ import { PlaylistTransportController } from '../../static/js/player/transport_co
 function makeTransport(hubOverrides = {}) {
     const hub = {
         audio: { pause: vi.fn(), play: vi.fn(() => Promise.resolve()), currentTime: 0, src: '' },
-        repeatMode: 'mix',
+        repeatMode: 'off',
+        shuffleMode: 'mix',
         shuffleOn: false,
         randomMode: false,
         currentTrackId: 't1',
@@ -99,7 +100,7 @@ describe('mix_order', () => {
 
     it('shuffles the whole order when shuffle is on', () => {
         mount_recs(['r1', 'r2']);
-        const { transport } = makeTransport({ shuffleOn: true });
+        const { transport } = makeTransport({ shuffleOn: true, shuffleMode: 'mix' });
         transport.shuffle = { shuffleArrayInPlace: vi.fn((arr) => arr.reverse()) };
         const order = transport.mix_order();
         expect(transport.shuffle.shuffleArrayInPlace).toHaveBeenCalledWith(order);

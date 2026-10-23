@@ -98,19 +98,22 @@ export class PlaylistTransportController {
 
         // Shuffle/Repeat
         if (hub.btnShuffle) hub.btnShuffle.addEventListener('click', () => {
-            hub.shuffleOn = !hub.shuffleOn;
+            const mode = hub.shuffleMode || (hub.shuffleOn ? 'shuffle' : 'off');
+            if (mode === 'off') hub.shuffleMode = 'shuffle';
+            else if (mode === 'shuffle') hub.shuffleMode = 'mix';
+            else hub.shuffleMode = 'off';
+            hub.shuffleOn = hub.shuffleMode !== 'off';
             this.shuffle.persistShuffle();
             if (hub.shuffleOn && hub.playable.length) this.shuffle.rebuildShuffledOrder();
             this.shuffle.updateShuffleRepeatUi();
+            if (hub.shuffleMode === 'mix') this.ensure_mix_recommendations();
         });
         if (hub.btnRepeat) hub.btnRepeat.addEventListener('click', () => {
             if (hub.repeatMode === 'off') hub.repeatMode = 'all';
             else if (hub.repeatMode === 'all') hub.repeatMode = 'one';
-            else if (hub.repeatMode === 'one') hub.repeatMode = 'mix';
             else hub.repeatMode = 'off';
             this.shuffle.persistRepeat();
             this.shuffle.updateShuffleRepeatUi();
-            if (hub.repeatMode === 'mix') this.ensure_mix_recommendations();
         });
 
         // Like wiring
@@ -261,12 +264,13 @@ export class PlaylistTransportController {
         const hub = this.state.hub;
         try {
             const s = localStorage.getItem(hub.LS_SHUFFLE);
-            hub.shuffleOn = s === 'true';
+            hub.shuffleMode = (s === 'mix' || s === 'shuffle') ? s : (s === 'true' ? 'shuffle' : 'off');
+            hub.shuffleOn = hub.shuffleMode !== 'off';
             const r = localStorage.getItem(hub.LS_REPEAT);
-            hub.repeatMode = (r === 'all' || r === 'one' || r === 'mix') ? r : 'off';
+            hub.repeatMode = (r === 'all' || r === 'one') ? r : 'off';
             if (hub.shuffleOn) this.shuffle.restore_shuffle_order_from_storage();
             this.shuffle.updateShuffleRepeatUi();
-            if (hub.repeatMode === 'mix') this.ensure_mix_recommendations();
+            if (hub.shuffleMode === 'mix') this.ensure_mix_recommendations();
         } catch (e) {}
     }
 
@@ -620,7 +624,7 @@ export class PlaylistTransportController {
     playAtDelta(delta) {
         const hub = this.state.hub;
         try { console.debug('[Playlist] playAtDelta', { delta: delta, current: hub.currentTrackId }); } catch (e) {}
-        if (hub.repeatMode === 'mix' && !hub.randomMode && hub.playbackContext !== 'library') {
+        if (hub.shuffleMode === 'mix' && !hub.randomMode && hub.playbackContext !== 'library') {
             this.playAtDeltaMix(delta);
             return;
         }
@@ -1133,7 +1137,7 @@ export class PlaylistTransportController {
 
     advance_search_stream() {
         const hub = this.state.hub;
-        if (hub && hub.repeatMode === 'mix' && hub.playbackContext === 'recs') {
+        if (hub && hub.shuffleMode === 'mix' && hub.playbackContext === 'recs') {
             this.playAtDeltaMix(1);
             return;
         }

@@ -8,6 +8,7 @@ function make_hub(overrides = {}) {
         LS_REPEAT: 'spolocal_repeat',
         LS_SHUFFLE_ORDER: 'spolocal_shuffle_order',
         shuffleOn: false,
+        shuffleMode: 'off',
         repeatMode: 'off',
         playable: [],
         playlistId: 'p1',
@@ -15,8 +16,7 @@ function make_hub(overrides = {}) {
         btnShuffle: null,
         btnRepeat: null,
         repeatOneBadge: null,
-        repeatIcon: null,
-        repeatMixBadge: null,
+        shuffleMixBadge: null,
         queueVisible: false,
         ...overrides,
     };
@@ -48,14 +48,31 @@ describe('setQueueRef', () => {
     });
 });
 
+describe('shuffle_mode', () => {
+    it('falls back to the shuffle flag for older hubs', () => {
+        const on = make_controller({ shuffleOn: true, shuffleMode: undefined });
+        expect(on.ctrl.shuffle_mode()).toBe('shuffle');
+        const off = make_controller({ shuffleOn: false, shuffleMode: undefined });
+        expect(off.ctrl.shuffle_mode()).toBe('off');
+    });
+
+    it('returns the stored mode', () => {
+        const mix = make_controller({ shuffleMode: 'mix' });
+        expect(mix.ctrl.shuffle_mode()).toBe('mix');
+    });
+});
+
 describe('persistShuffle', () => {
-    it('writes the current shuffle flag as a string', () => {
-        const { ctrl, hub } = make_controller({ shuffleOn: true });
+    it('writes the current shuffle mode', () => {
+        const { ctrl, hub } = make_controller({ shuffleMode: 'shuffle' });
         ctrl.persistShuffle();
-        expect(localStorage.getItem(hub.LS_SHUFFLE)).toBe('true');
-        hub.shuffleOn = false;
+        expect(localStorage.getItem(hub.LS_SHUFFLE)).toBe('shuffle');
+        hub.shuffleMode = 'mix';
         ctrl.persistShuffle();
-        expect(localStorage.getItem(hub.LS_SHUFFLE)).toBe('false');
+        expect(localStorage.getItem(hub.LS_SHUFFLE)).toBe('mix');
+        hub.shuffleMode = 'off';
+        ctrl.persistShuffle();
+        expect(localStorage.getItem(hub.LS_SHUFFLE)).toBe('off');
     });
 });
 
@@ -67,9 +84,6 @@ describe('persistRepeat', () => {
         hub.repeatMode = 'one';
         ctrl.persistRepeat();
         expect(localStorage.getItem(hub.LS_REPEAT)).toBe('one');
-        hub.repeatMode = 'mix';
-        ctrl.persistRepeat();
-        expect(localStorage.getItem(hub.LS_REPEAT)).toBe('mix');
     });
 });
 
@@ -266,7 +280,7 @@ describe('syncShuffleOrderWithPlaylist', () => {
 describe('updateShuffleRepeatUi', () => {
     it('marks the shuffle button active when shuffle is on', () => {
         const btnShuffle = document.createElement('button');
-        const { ctrl } = make_controller({ shuffleOn: true, btnShuffle });
+        const { ctrl } = make_controller({ shuffleMode: 'shuffle', btnShuffle });
         ctrl.updateShuffleRepeatUi();
         expect(btnShuffle.classList.contains('player-control-btn--active')).toBe(true);
         expect(btnShuffle.classList.contains('player-control-btn--muted')).toBe(false);
@@ -275,11 +289,27 @@ describe('updateShuffleRepeatUi', () => {
 
     it('marks the shuffle button muted when shuffle is off', () => {
         const btnShuffle = document.createElement('button');
-        const { ctrl } = make_controller({ shuffleOn: false, btnShuffle });
+        const { ctrl } = make_controller({ shuffleMode: 'off', btnShuffle });
         ctrl.updateShuffleRepeatUi();
         expect(btnShuffle.classList.contains('player-control-btn--active')).toBe(false);
         expect(btnShuffle.classList.contains('player-control-btn--muted')).toBe(true);
         expect(btnShuffle.getAttribute('aria-pressed')).toBe('false');
+    });
+
+    it('sets the shuffle title for each mode', () => {
+        const btnShuffle = document.createElement('button');
+        const { ctrl, hub } = make_controller({ shuffleMode: 'off', btnShuffle });
+
+        ctrl.updateShuffleRepeatUi();
+        expect(btnShuffle.getAttribute('title')).toBe('Shuffle: off');
+
+        hub.shuffleMode = 'shuffle';
+        ctrl.updateShuffleRepeatUi();
+        expect(btnShuffle.getAttribute('title')).toBe('Shuffle: on');
+
+        hub.shuffleMode = 'mix';
+        ctrl.updateShuffleRepeatUi();
+        expect(btnShuffle.getAttribute('title')).toBe('Mix: playlist + recommendations');
     });
 
     it('sets the repeat title for each mode', () => {
@@ -300,34 +330,20 @@ describe('updateShuffleRepeatUi', () => {
         expect(btnRepeat.getAttribute('title')).toBe('Repeat one');
         expect(btnRepeat.getAttribute('aria-pressed')).toBe('true');
 
-        hub.repeatMode = 'mix';
+        hub.repeatMode = 'off';
         ctrl.updateShuffleRepeatUi();
-        expect(btnRepeat.getAttribute('title')).toBe('Mix: playlist + recommendations');
-        expect(btnRepeat.getAttribute('aria-pressed')).toBe('true');
-    });
-
-    it('swaps the repeat icon for the mix glyph', () => {
-        const repeatIcon = document.createElement('i');
-        repeatIcon.className = 'fa-solid fa-repeat';
-        const { ctrl, hub } = make_controller({ repeatMode: 'mix', repeatIcon });
-        ctrl.updateShuffleRepeatUi();
-        expect(repeatIcon.classList.contains('fa-shuffle')).toBe(true);
-        expect(repeatIcon.classList.contains('fa-repeat')).toBe(false);
-
-        hub.repeatMode = 'all';
-        ctrl.updateShuffleRepeatUi();
-        expect(repeatIcon.classList.contains('fa-repeat')).toBe(true);
-        expect(repeatIcon.classList.contains('fa-shuffle')).toBe(false);
+        expect(btnRepeat.getAttribute('title')).toBe('Repeat: off');
+        expect(btnRepeat.getAttribute('aria-pressed')).toBe('false');
     });
 
     it('shows the mix badge only in mix mode', () => {
-        const repeatMixBadge = document.createElement('span');
-        const { ctrl, hub } = make_controller({ repeatMode: 'mix', repeatMixBadge });
+        const shuffleMixBadge = document.createElement('span');
+        const { ctrl, hub } = make_controller({ shuffleMode: 'mix', shuffleMixBadge });
         ctrl.updateShuffleRepeatUi();
-        expect(repeatMixBadge.classList.contains('hidden')).toBe(false);
-        hub.repeatMode = 'all';
+        expect(shuffleMixBadge.classList.contains('hidden')).toBe(false);
+        hub.shuffleMode = 'shuffle';
         ctrl.updateShuffleRepeatUi();
-        expect(repeatMixBadge.classList.contains('hidden')).toBe(true);
+        expect(shuffleMixBadge.classList.contains('hidden')).toBe(true);
     });
 
     it('shows the repeat-one badge only in repeat one mode', () => {

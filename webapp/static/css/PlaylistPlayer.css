@@ -816,14 +816,14 @@ body { background: #121212; color: #fff; }
 #player-cover-fallback { display: none; }
 .player-control-btn--active { color: #1DB954 !important; }
 .player-control-btn--muted { color: #727272; }
-#player-repeat-wrap { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+#player-repeat-wrap, #player-shuffle-wrap { position: relative; display: inline-flex; align-items: center; justify-content: center; }
 #player-repeat-one-badge {
     position: absolute; bottom: 2px; right: 2px; font-size: 8px; font-weight: 800;
     line-height: 1; color: #121212; background: #1DB954; border-radius: 2px; padding: 0 2px;
     pointer-events: none;
 }
-#player-repeat-mix-badge {
-    position: absolute; top: 0; right: 0; font-size: 9px; font-weight: 800;
+#player-shuffle-mix-badge {
+    position: absolute; top: 1px; right: 1px; font-size: 8px; font-weight: 800;
     line-height: 1; color: #1DB954; text-shadow: 0 0 2px #121212;
     pointer-events: none;
 }

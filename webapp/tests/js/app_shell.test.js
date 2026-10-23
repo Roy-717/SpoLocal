@@ -48,6 +48,8 @@ function mount_shell_dom() {
         <div id="atp-download-tiers"></div>
         <div id="atp-download-kbps-value"></div>
         <div id="sidebar-playlist-list"></div>
+        <div id="playlist-recommendations-grid"></div>
+        <div id="playlist-recommendations-msg" class="hidden"></div>
     `;
 }
 
@@ -81,6 +83,7 @@ beforeEach(async () => {
     delete window.invalidatePlaylistViewCache;
     delete window.refreshHomeView;
     delete window.loadPlaylistRecommendations;
+    delete window.ensurePlaylistRecommendations;
     delete window.bustPlaylistCoverImages;
     delete window.applyQualityAwareCovers;
     delete window.spolocalStreamSrc;
@@ -530,5 +533,41 @@ describe('playlists catalog and sidebar', () => {
         expect(call[1].body.get('title')).toBe('Song');
         expect(call[1].body.get('source_playlist_id')).toBe('p0');
         expect(shell.afterTrackAddedToPlaylist).toHaveBeenCalledWith('p1');
+    });
+});
+
+describe('ensurePlaylistRecommendations', () => {
+    it('renders the cached hits without fetching', async () => {
+        const shell = await load_shell();
+        shell.recs_cache_pid = 'p1';
+        shell.recs_cache_hits = [{ video_id: 'r1', title: 'T', artist: 'A' }];
+        shell.fetchPlaylistRecommendationsWhenVisible = vi.fn();
+
+        shell.ensurePlaylistRecommendations('p1');
+
+        expect(shell.fetchPlaylistRecommendationsWhenVisible).not.toHaveBeenCalled();
+        const table = document.getElementById('playlist-recommendations-table');
+        expect(table).not.toBeNull();
+        expect(table.querySelectorAll('tr[data-youtube-video-id]').length).toBe(1);
+    });
+
+    it('fetches when the cache belongs to another playlist', async () => {
+        const shell = await load_shell();
+        shell.recs_cache_pid = 'p2';
+        shell.recs_cache_hits = [{ video_id: 'r1', title: 'T', artist: 'A' }];
+        shell.disconnectPlaylistRecommendationsObserver = vi.fn();
+        shell.paint_recs_cache_or_fetch = vi.fn();
+
+        shell.ensurePlaylistRecommendations('p1');
+
+        expect(shell.disconnectPlaylistRecommendationsObserver).toHaveBeenCalled();
+        expect(shell.paint_recs_cache_or_fetch).toHaveBeenCalledWith('p1');
+    });
+
+    it('does nothing without a playlist id', async () => {
+        const shell = await load_shell();
+        shell.paint_recs_cache_or_fetch = vi.fn();
+        shell.ensurePlaylistRecommendations('');
+        expect(shell.paint_recs_cache_or_fetch).not.toHaveBeenCalled();
     });
 });

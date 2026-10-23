@@ -822,6 +822,11 @@ body { background: #121212; color: #fff; }
     line-height: 1; color: #121212; background: #1DB954; border-radius: 2px; padding: 0 2px;
     pointer-events: none;
 }
+#player-repeat-mix-badge {
+    position: absolute; top: 0; right: 0; font-size: 9px; font-weight: 800;
+    line-height: 1; color: #1DB954; text-shadow: 0 0 2px #121212;
+    pointer-events: none;
+}
 /* Playlist 2×2 art: fill each cell, crop to square (overrides img { height: auto } preflight). */
 .playlist-art-grid__cell {
     position: relative;

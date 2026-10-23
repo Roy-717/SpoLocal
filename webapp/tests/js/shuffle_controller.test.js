@@ -15,6 +15,8 @@ function make_hub(overrides = {}) {
         btnShuffle: null,
         btnRepeat: null,
         repeatOneBadge: null,
+        repeatIcon: null,
+        repeatMixBadge: null,
         queueVisible: false,
         ...overrides,
     };
@@ -65,6 +67,9 @@ describe('persistRepeat', () => {
         hub.repeatMode = 'one';
         ctrl.persistRepeat();
         expect(localStorage.getItem(hub.LS_REPEAT)).toBe('one');
+        hub.repeatMode = 'mix';
+        ctrl.persistRepeat();
+        expect(localStorage.getItem(hub.LS_REPEAT)).toBe('mix');
     });
 });
 
@@ -294,6 +299,35 @@ describe('updateShuffleRepeatUi', () => {
         ctrl.updateShuffleRepeatUi();
         expect(btnRepeat.getAttribute('title')).toBe('Repeat one');
         expect(btnRepeat.getAttribute('aria-pressed')).toBe('true');
+
+        hub.repeatMode = 'mix';
+        ctrl.updateShuffleRepeatUi();
+        expect(btnRepeat.getAttribute('title')).toBe('Mix: playlist + recommendations');
+        expect(btnRepeat.getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('swaps the repeat icon for the mix glyph', () => {
+        const repeatIcon = document.createElement('i');
+        repeatIcon.className = 'fa-solid fa-repeat';
+        const { ctrl, hub } = make_controller({ repeatMode: 'mix', repeatIcon });
+        ctrl.updateShuffleRepeatUi();
+        expect(repeatIcon.classList.contains('fa-shuffle')).toBe(true);
+        expect(repeatIcon.classList.contains('fa-repeat')).toBe(false);
+
+        hub.repeatMode = 'all';
+        ctrl.updateShuffleRepeatUi();
+        expect(repeatIcon.classList.contains('fa-repeat')).toBe(true);
+        expect(repeatIcon.classList.contains('fa-shuffle')).toBe(false);
+    });
+
+    it('shows the mix badge only in mix mode', () => {
+        const repeatMixBadge = document.createElement('span');
+        const { ctrl, hub } = make_controller({ repeatMode: 'mix', repeatMixBadge });
+        ctrl.updateShuffleRepeatUi();
+        expect(repeatMixBadge.classList.contains('hidden')).toBe(false);
+        hub.repeatMode = 'all';
+        ctrl.updateShuffleRepeatUi();
+        expect(repeatMixBadge.classList.contains('hidden')).toBe(true);
     });
 
     it('shows the repeat-one badge only in repeat one mode', () => {

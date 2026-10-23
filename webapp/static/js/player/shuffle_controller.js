@@ -130,10 +130,19 @@ export class PlaylistShuffleController {
             let title = 'Repeat: off';
             if (hub.repeatMode === 'all') title = 'Repeat: all';
             else if (hub.repeatMode === 'one') title = 'Repeat one';
+            else if (hub.repeatMode === 'mix') title = 'Mix: playlist + recommendations';
             hub.btnRepeat.setAttribute('title', title);
+        }
+        if (hub.repeatIcon) {
+            const mix = hub.repeatMode === 'mix';
+            hub.repeatIcon.classList.toggle('fa-repeat', !mix);
+            hub.repeatIcon.classList.toggle('fa-shuffle', mix);
         }
         if (hub.repeatOneBadge) {
             hub.repeatOneBadge.classList.toggle('hidden', hub.repeatMode !== 'one');
+        }
+        if (hub.repeatMixBadge) {
+            hub.repeatMixBadge.classList.toggle('hidden', hub.repeatMode !== 'mix');
         }
         if (hub.queueVisible && this.queue) {
             this.queue.render_queue_list();

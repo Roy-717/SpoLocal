@@ -1,6 +1,6 @@
-import { PlaylistTransportController } from '../player/transport_controller.js?v=106';
+import { PlaylistTransportController } from '../player/transport_controller.js?v=107';
 import { PlaylistLikeController } from '../player/like_controller.js?v=1';
-import { PlaylistShuffleController } from '../player/shuffle_controller.js?v=1';
+import { PlaylistShuffleController } from '../player/shuffle_controller.js?v=2';
 import { PlaylistMediaSessionController } from '../player/media_session_controller.js?v=1';
 import { PlaybackQualityController } from '../player/playback_quality_controller.js?v=3';
 import { PlaylistQueueController } from '../player/queue_controller.js?v=90';
@@ -307,6 +307,8 @@ export class PlaylistSessionController {
         hub.btnShuffle = document.getElementById('player-shuffle');
         hub.btnRepeat = document.getElementById('player-repeat');
         hub.repeatOneBadge = document.getElementById('player-repeat-one-badge');
+        hub.repeatIcon = document.getElementById('player-repeat-icon');
+        hub.repeatMixBadge = document.getElementById('player-repeat-mix-badge');
         hub.btnLike = document.getElementById('player-like');
         hub.btnLikeMobile = document.getElementById('player-like-mobile');
         hub.likeIconEl = document.getElementById('player-like-icon');

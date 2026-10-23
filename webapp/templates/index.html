@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="/static/app.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script>window.__likedPlaylistId = {{ liked_playlist_id | tojson }};</script>
-    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=35">
+    <link rel="stylesheet" href="/static/css/PlaylistPlayer.css?v=36">
 </head>
 <body class="font-sans h-screen flex flex-col overflow-hidden">
     <!-- Top bar -->
@@ -658,9 +658,10 @@
                 </button>
                 <span id="player-repeat-wrap" class="shrink-0">
                     <button type="button" id="player-repeat" class="player-control-btn--muted w-10 h-10 lg:w-9 lg:h-9 rounded-full hover:text-white text-lg leading-none" title="Repeat: off" aria-pressed="false">
-                        <i class="fa-solid fa-repeat text-[15px] lg:text-[13px]"></i>
+                        <i id="player-repeat-icon" class="fa-solid fa-repeat text-[15px] lg:text-[13px]"></i>
                     </button>
                     <span id="player-repeat-one-badge" class="hidden" aria-hidden="true">1</span>
+                    <span id="player-repeat-mix-badge" class="hidden" aria-hidden="true">&#10022;</span>
                 </span>
                 <button type="button" id="player-like"
                         class="player-like--desktop player-control-btn--muted w-10 h-10 lg:w-9 lg:h-9 rounded-full hover:text-white text-lg leading-none shrink-0 disabled:opacity-40 disabled:pointer-events-none"
@@ -694,8 +695,8 @@
         window.butterchurn = butterchurn && butterchurn.default ? butterchurn.default : butterchurn;
         window.dispatchEvent(new Event('spolocal-butterchurn-ready'));
     </script>
-        <script type="module" src="/static/js/PlaylistSession.mjs?v=114"></script>
+        <script type="module" src="/static/js/PlaylistSession.mjs?v=115"></script>
     <script type="module" src="/static/pwa/pwa-entry.js"></script>
-    <script src="/static/js/app_shell.js?v=38" defer></script>
+    <script src="/static/js/app_shell.js?v=39" defer></script>
 </body>
 </html>

@@ -1212,6 +1212,18 @@ class AppShellController {
         void this.fetchPlaylistRecommendationsWhenVisible(pid);
     }
 
+    /** Fetch/render recommendations now, even if the section is off-screen. */
+    ensurePlaylistRecommendations(pid) {
+        const grid = document.getElementById('playlist-recommendations-grid');
+        if (!grid || !pid) return;
+        if (this.recs_cache_pid === String(pid) && this.recs_cache_hits.length) {
+            this.render_playlist_recommendation_rows(grid, this.recs_cache_hits);
+            return;
+        }
+        this.disconnectPlaylistRecommendationsObserver();
+        this.paint_recs_cache_or_fetch(pid);
+    }
+
     /**
      * Mix recs: mid/high only after the block is in the playlist scroll view.
      * Low quality never auto-fetches; user clicks Load Recommendations.
@@ -1410,6 +1422,7 @@ class AppShellController {
         try { window.openAddToPlaylistAtPoint = (hit, x, y) => this.openAddToPlaylistAtPoint(hit, x, y); } catch (e) {}
         window.closeGlobalSearch = () => this.closeGlobalSearch();
         window.loadPlaylistRecommendations = (pid) => this.loadPlaylistRecommendations(pid);
+        window.ensurePlaylistRecommendations = (pid) => this.ensurePlaylistRecommendations(pid);
         window.refreshSidebarPlaylistList = async (activePlaylistId) => {
             // A finished download changes track status/variants; drop cached views.
             if (typeof window.invalidatePlaylistViewCache === 'function') {

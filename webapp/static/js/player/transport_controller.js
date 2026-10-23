@@ -106,9 +106,11 @@ export class PlaylistTransportController {
         if (hub.btnRepeat) hub.btnRepeat.addEventListener('click', () => {
             if (hub.repeatMode === 'off') hub.repeatMode = 'all';
             else if (hub.repeatMode === 'all') hub.repeatMode = 'one';
+            else if (hub.repeatMode === 'one') hub.repeatMode = 'mix';
             else hub.repeatMode = 'off';
             this.shuffle.persistRepeat();
             this.shuffle.updateShuffleRepeatUi();
+            if (hub.repeatMode === 'mix') this.ensure_mix_recommendations();
         });
 
         // Like wiring
@@ -261,9 +263,10 @@ export class PlaylistTransportController {
             const s = localStorage.getItem(hub.LS_SHUFFLE);
             hub.shuffleOn = s === 'true';
             const r = localStorage.getItem(hub.LS_REPEAT);
-            hub.repeatMode = (r === 'all' || r === 'one') ? r : 'off';
+            hub.repeatMode = (r === 'all' || r === 'one' || r === 'mix') ? r : 'off';
             if (hub.shuffleOn) this.shuffle.restore_shuffle_order_from_storage();
             this.shuffle.updateShuffleRepeatUi();
+            if (hub.repeatMode === 'mix') this.ensure_mix_recommendations();
         } catch (e) {}
     }
 
@@ -617,6 +620,10 @@ export class PlaylistTransportController {
     playAtDelta(delta) {
         const hub = this.state.hub;
         try { console.debug('[Playlist] playAtDelta', { delta: delta, current: hub.currentTrackId }); } catch (e) {}
+        if (hub.repeatMode === 'mix' && !hub.randomMode && hub.playbackContext !== 'library') {
+            this.playAtDeltaMix(delta);
+            return;
+        }
         if (this.isSearchStreamPlayback() || hub.playbackContext === 'recs') {
             this.skip_rec_or_mix_row(delta);
             return;
@@ -732,6 +739,129 @@ export class PlaylistTransportController {
             ? this.wrap_index(next_idx, n)
             : (next_idx >= 0 && next_idx < n ? next_idx : n - 1);
         this.playTrackById(hub.playable[target].id);
+    }
+
+    /** Recommendations currently rendered for the viewed playlist. */
+    mix_rec_entries() {
+        const rows = [];
+        const table = document.getElementById('playlist-recommendations-table');
+        if (!table) return rows;
+        table.querySelectorAll('tr.track-row[data-youtube-video-id]').forEach((r) => {
+            const vid = String(r.getAttribute('data-youtube-video-id') || '').trim();
+            if (!vid) return;
+            rows.push({
+                kind: 'rec',
+                video_id: vid,
+                title: r.getAttribute('data-title') || '',
+                artist: r.getAttribute('data-artist') || '',
+            });
+        });
+        return rows;
+    }
+
+    /** Playlist tracks with recommendations spread evenly between them. */
+    mix_order() {
+        const hub = this.state.hub;
+        const tracks = hub.playable || [];
+        const recs = this.mix_rec_entries();
+        const sig = tracks.map((t) => String(t.id)).join('|')
+            + '::' + recs.map((r) => r.video_id).join('|')
+            + '::' + (hub.shuffleOn ? 's' : 'n');
+        if (hub.mixOrder && hub.mixOrderSig === sig) return hub.mixOrder;
+
+        const order = [];
+        const max_recs = tracks.length ? Math.ceil(tracks.length / 2) : recs.length;
+        const used = recs.slice(0, max_recs);
+        const every = used.length ? Math.max(1, Math.round(tracks.length / used.length)) : 0;
+        let ri = 0;
+        for (let i = 0; i < tracks.length; i++) {
+            order.push({ kind: 'track', id: tracks[i].id });
+            if (every && (i + 1) % every === 0 && ri < used.length) order.push(used[ri++]);
+        }
+        while (ri < used.length) order.push(used[ri++]);
+        if (hub.shuffleOn && this.shuffle) this.shuffle.shuffleArrayInPlace(order);
+
+        hub.mixOrder = order;
+        hub.mixOrderSig = sig;
+        return order;
+    }
+
+    /** Index of the playing item inside the mix order, or -1. */
+    mix_current_index(order) {
+        const hub = this.state.hub;
+        if (hub.playbackContext === 'recs') {
+            const vid = this.current_stream_vid();
+            if (vid) {
+                const i = order.findIndex((e) => e.kind === 'rec' && e.video_id === vid);
+                if (i >= 0) return i;
+            }
+        }
+        const tid = String(hub.currentTrackId || '');
+        if (!tid) return -1;
+        return order.findIndex((e) => e.kind === 'track' && String(e.id) === tid);
+    }
+
+    current_stream_vid() {
+        const hub = this.state.hub;
+        const from_hit = hub.searchStreamHit ? String(hub.searchStreamHit.video_id || '').trim() : '';
+        if (from_hit) return from_hit;
+        return this.stream_vid_from_src(hub.audio && (hub.audio.currentSrc || hub.audio.src));
+    }
+
+    rec_row_for_video(vid) {
+        const table = document.getElementById('playlist-recommendations-table');
+        if (!table || !vid) return null;
+        const rows = table.querySelectorAll('tr.track-row[data-youtube-video-id]');
+        for (let i = 0; i < rows.length; i++) {
+            if (rows[i].getAttribute('data-youtube-video-id') === vid) return rows[i];
+        }
+        return null;
+    }
+
+    play_mix_entry(entry) {
+        if (!entry) return false;
+        if (entry.kind === 'track') {
+            void this.playTrackById(entry.id);
+            return true;
+        }
+        const row = this.rec_row_for_video(entry.video_id);
+        if (row) return this.play_rec_or_mix_row(row);
+        if (typeof window.playPreview === 'function') {
+            window.playPreview({
+                video_id: entry.video_id,
+                title: entry.title || '',
+                artist: entry.artist || '',
+                channel: entry.artist || '',
+            }, null);
+            return true;
+        }
+        return false;
+    }
+
+    /** Advance through the playlist + recommendations mix, wrapping at the end. */
+    playAtDeltaMix(delta) {
+        const order = this.mix_order();
+        if (!order.length) {
+            this.stop_playback();
+            return;
+        }
+        if (!order.some((e) => e.kind === 'rec')) this.ensure_mix_recommendations();
+        let idx = this.mix_current_index(order);
+        if (idx < 0) idx = delta > 0 ? -1 : 0;
+        const target = order[this.wrap_index(idx + delta, order.length)];
+        if (!this.play_mix_entry(target)) this.stop_playback();
+    }
+
+    /** Load the playlist recommendations once so mix mode has something to add. */
+    ensure_mix_recommendations() {
+        const hub = this.state.hub;
+        const pid = String(hub.playlistId || '');
+        if (!pid || hub._mixRecsRequestedFor === pid) return;
+        if (typeof window.ensurePlaylistRecommendations !== 'function') return;
+        hub._mixRecsRequestedFor = pid;
+        hub.mixOrder = null;
+        hub.mixOrderSig = '';
+        window.ensurePlaylistRecommendations(pid);
     }
 
     fmt(sec) {
@@ -1002,6 +1132,11 @@ export class PlaylistTransportController {
     }
 
     advance_search_stream() {
+        const hub = this.state.hub;
+        if (hub && hub.repeatMode === 'mix' && hub.playbackContext === 'recs') {
+            this.playAtDeltaMix(1);
+            return;
+        }
         this.skip_rec_or_mix_row(1);
     }
 

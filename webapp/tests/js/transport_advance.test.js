@@ -34,6 +34,7 @@ function makeTransport(hubOverrides = {}) {
     transport.playLibraryEntry = vi.fn();
     transport.skip_rec_or_mix_row = vi.fn();
     transport.playAtDeltaPlaylistBody = vi.fn();
+    transport.playAtDeltaMix = vi.fn();
     transport.playAtDeltaRandomMode = vi.fn(() => true);
     transport.pick_random_library_entry = vi.fn(() => entry('t9'));
     return { transport, hub };
@@ -65,6 +66,26 @@ describe('playAtDelta routing', () => {
         transport.playAtDelta(1);
         expect(transport.playAtDeltaPlaylistBody).toHaveBeenCalledWith(1);
         expect(transport.skip_rec_or_mix_row).not.toHaveBeenCalled();
+    });
+
+    it('routes playlist playback through the mix in mix mode', () => {
+        const { transport } = makeTransport({ playbackContext: 'playlist', repeatMode: 'mix' });
+        transport.playAtDelta(1);
+        expect(transport.playAtDeltaMix).toHaveBeenCalledWith(1);
+        expect(transport.playAtDeltaPlaylistBody).not.toHaveBeenCalled();
+        expect(transport.skip_rec_or_mix_row).not.toHaveBeenCalled();
+    });
+
+    it('keeps library playback out of the mix', () => {
+        const { transport } = makeTransport({ playbackContext: 'library', repeatMode: 'mix' });
+        transport.playAtDelta(1);
+        expect(transport.playAtDeltaMix).not.toHaveBeenCalled();
+    });
+
+    it('keeps random mode out of the mix', () => {
+        const { transport } = makeTransport({ playbackContext: 'playlist', repeatMode: 'mix', randomMode: true });
+        transport.playAtDelta(1);
+        expect(transport.playAtDeltaMix).not.toHaveBeenCalled();
     });
 });
 
